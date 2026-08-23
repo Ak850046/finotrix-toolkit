@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Image Editor — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>Image Editor</h1><p class="sub">Crop · rotate · adjust · annotate</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><h3>Image</h3><span id="dims" class="badge">—</span></div>
+      <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop an image</strong><p>Drag on the canvas to crop.</p><div class="only">JPG · PNG · WEBP</div></div>
+      <input id="fileInput" type="file" accept="image/*">
+      <div style="margin-top:12px;overflow:auto"><canvas id="cv" class="work"></canvas></div>
+      <div id="status" class="status"></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><h3>Adjust</h3></div>
+      <div class="actions">
+        <button id="rl" class="btn btn-secondary">⟲ Rotate</button><button id="rr" class="btn btn-secondary">⟳ Rotate</button>
+        <button id="fh" class="btn btn-secondary">Flip H</button><button id="fv" class="btn btn-secondary">Flip V</button>
+      </div>
+      <div class="field"><label>Brightness: <span id="bv">100%</span></label><input id="b" type="range" min="20" max="200" value="100"></div>
+      <div class="field"><label>Contrast: <span id="cvv">100%</span></label><input id="c" type="range" min="20" max="200" value="100"></div>
+      <div class="field"><label>Saturation: <span id="sv">100%</span></label><input id="s" type="range" min="0" max="200" value="100"></div>
+      <label class="opt"><input id="gray" type="checkbox"><span>Grayscale</span></label>
+      <div class="card-title" style="margin-top:14px"><h3>Crop</h3></div>
+      <div class="actions"><button id="applyCrop" class="btn btn-secondary" disabled>Apply crop</button><button id="clearCrop" class="btn btn-secondary" disabled>Clear selection</button></div>
+      <div class="card-title" style="margin-top:14px"><h3>Text</h3></div>
+      <div class="row"><div class="field" style="flex:2"><label>Caption</label><input id="txt" type="text" placeholder="Type, then click on image to place"></div><div class="field"><label>Size</label><input id="tsize" type="number" value="28" min="8"></div><div class="field"><label>Colour</label><input id="tcolor" type="color" value="#7a2434"></div></div>
+      <div class="card-title" style="margin-top:14px"><h3>Export</h3></div>
+      <div class="row"><div class="field"><label>Format</label><select id="fmt"><option value="image/png">PNG</option><option value="image/jpeg" selected>JPG</option></select></div><div class="field"><label>Quality: <span id="qv">92%</span></label><input id="q" type="range" min="40" max="98" value="92"></div></div>
+      <div class="actions"><button id="save" class="btn btn-primary" disabled>Download</button><button id="reset" class="btn btn-secondary">Reset</button></div>
+      <div class="note">Basic editor — all in-browser, 100% offline.</div>
+    </div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — Image Editor</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,stripExt,saveBlob}=FTX;
+let img=null,name='image',rot=0,fh=false,fv=false,crop=null,sel=null,texts=[];
+const cv=$('cv'),ctx=cv.getContext('2d');
+FTX.wireDrop('dropzone','fileInput',async list=>{const f=list[0];if(!f||!/^image\//.test(f.type)){FTX.status('status','Please choose an image.','bad');return;}name=stripExt(f.name);img=await FTX.loadImage(await FTX.readAsDataURL(f));rot=0;fh=fv=false;crop=null;sel=null;texts=[];['save','applyCrop','clearCrop'].forEach(id=>$(id).disabled=id==='save'?false:true);render();FTX.hideStatus('status');});
+['b','c','s'].forEach(id=>$(id).oninput=()=>{$({b:'bv',c:'cvv',s:'sv'}[id]).textContent=$(id).value+'%';render();});
+$('gray').onchange=render;$('q').oninput=()=>$('qv').textContent=$('q').value+'%';
+$('rl').onclick=()=>{rot=(rot+270)%360;crop=sel=null;render();};
+$('rr').onclick=()=>{rot=(rot+90)%360;crop=sel=null;render();};
+$('fh').onclick=()=>{fh=!fh;render();};$('fv').onclick=()=>{fv=!fv;render();};
+$('reset').onclick=()=>{if(!img)return;rot=0;fh=fv=false;crop=sel=null;texts=[];$('b').value=$('c').value=$('s').value=100;$('bv').textContent=$('cvv').textContent=$('sv').textContent='100%';$('gray').checked=false;$('applyCrop').disabled=$('clearCrop').disabled=true;render();};
+$('clearCrop').onclick=()=>{sel=null;$('applyCrop').disabled=true;$('clearCrop').disabled=true;render();};
+$('applyCrop').onclick=()=>{if(sel){crop=sel;sel=null;$('applyCrop').disabled=true;$('clearCrop').disabled=true;render();}};
+function filterStr(){return `brightness(${$('b').value}%) contrast(${$('c').value}%) saturate(${$('s').value}%) ${$('gray').checked?'grayscale(1)':''}`;}
+// draw the base (oriented, filtered, cropped) image into a canvas and return {canvas, w, h}
+function baseCanvas(){
+  const iw=img.naturalWidth,ih=img.naturalHeight;
+  const ori=document.createElement('canvas');const swap=(rot===90||rot===270);
+  ori.width=swap?ih:iw;ori.height=swap?iw:ih;const octx=ori.getContext('2d');
+  octx.filter=filterStr();
+  octx.save();octx.translate(ori.width/2,ori.height/2);octx.rotate(rot*Math.PI/180);octx.scale(fh?-1:1,fv?-1:1);octx.drawImage(img,-iw/2,-ih/2);octx.restore();
+  let out=ori;
+  if(crop){const c=document.createElement('canvas');c.width=Math.max(1,Math.round(crop.w));c.height=Math.max(1,Math.round(crop.h));c.getContext('2d').drawImage(ori,crop.x,crop.y,crop.w,crop.h,0,0,c.width,c.height);out=c;}
+  return out;
+}
+function render(){
+  if(!img)return;const base=baseCanvas();
+  cv.width=base.width;cv.height=base.height;ctx.clearRect(0,0,cv.width,cv.height);ctx.drawImage(base,0,0);
+  // text
+  for(const t of texts){ctx.fillStyle=t.color;ctx.font=`bold ${t.size}px Georgia, serif`;ctx.textBaseline='top';ctx.fillText(t.text,t.x,t.y);}
+  // selection overlay
+  if(sel){ctx.strokeStyle='#7a2434';ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.strokeRect(sel.x,sel.y,sel.w,sel.h);ctx.setLineDash([]);ctx.fillStyle='rgba(122,36,52,.12)';ctx.fillRect(sel.x,sel.y,sel.w,sel.h);}
+  $('dims').textContent=cv.width+'×'+cv.height;$('save').disabled=false;
+}
+// canvas interaction: DRAG = crop selection, CLICK = drop a text caption (pointer events, mouse+touch)
+let down=null,moved=false;
+cv.style.cursor='crosshair';cv.style.touchAction='none';
+function pt(e){const r=cv.getBoundingClientRect();const sx=cv.width/(r.width||cv.width),sy=cv.height/(r.height||cv.height);return {x:(e.clientX-r.left)*sx,y:(e.clientY-r.top)*sy};}
+cv.addEventListener('pointerdown',e=>{if(!img)return;e.preventDefault();try{cv.setPointerCapture(e.pointerId);}catch(_){}down=pt(e);moved=false;sel=null;});
+cv.addEventListener('pointermove',e=>{if(!down)return;const p=pt(e);if(Math.abs(p.x-down.x)>3||Math.abs(p.y-down.y)>3)moved=true;if(moved){sel={x:Math.min(down.x,p.x),y:Math.min(down.y,p.y),w:Math.abs(p.x-down.x),h:Math.abs(p.y-down.y)};render();}});
+cv.addEventListener('pointerup',e=>{if(!down)return;const p=pt(e);const wasMoved=moved;down=null;try{cv.releasePointerCapture(e.pointerId);}catch(_){}
+  if(wasMoved){ if(sel&&sel.w>4&&sel.h>4){$('applyCrop').disabled=false;$('clearCrop').disabled=false;} else sel=null; render(); }
+  else if($('txt').value.trim()){ texts.push({x:p.x,y:p.y,text:$('txt').value,size:+$('tsize').value||28,color:$('tcolor').value}); $('txt').value=''; render(); }
+});
+cv.addEventListener('pointercancel',()=>{down=null;moved=false;sel=null;render();});
+$('save').onclick=async()=>{if(!img)return;const base=baseCanvas();const oc=document.createElement('canvas');oc.width=base.width;oc.height=base.height;const octx=oc.getContext('2d');const fmt=$('fmt').value;if(fmt==='image/jpeg'){octx.fillStyle='#fff';octx.fillRect(0,0,oc.width,oc.height);}octx.drawImage(base,0,0);for(const t of texts){octx.fillStyle=t.color;octx.font=`bold ${t.size}px Georgia, serif`;octx.textBaseline='top';octx.fillText(t.text,t.x,t.y);}const blob=await new Promise(r=>oc.toBlob(r,fmt,fmt==='image/png'?undefined:(+$('q').value)/100));saveBlob(blob,name+'-edited.'+(fmt==='image/png'?'png':'jpg'));FTX.status('status','Saved.','good');};
+})();
+</script>
+</body>
+</html>

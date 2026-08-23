@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redact PDF — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>Redact PDF</h1><p class="sub">Black out and permanently remove content</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><h3>Upload PDF</h3><span id="pc" class="badge">—</span></div>
+      <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop a PDF</strong><div class="only">PDF</div></div>
+      <input id="fileInput" type="file" accept=".pdf">
+      <div id="fileList" class="file-list"></div>
+      <div class="row" style="align-items:center">
+        <button id="prev" class="btn btn-secondary">&larr; Prev</button>
+        <div class="field" style="flex:0 0 auto"><label>Page</label><span id="pnav" class="badge">—</span></div>
+        <button id="next" class="btn btn-secondary">Next &rarr;</button>
+      </div>
+      <div class="actions"><button id="undo" class="btn btn-secondary">Undo box</button><button id="clrpage" class="btn btn-secondary">Clear page</button></div>
+      <div class="field"><label>Export resolution</label><select id="dpi"><option value="150">150 DPI</option><option value="200" selected>200 DPI</option><option value="300">300 DPI</option></select></div>
+      <div class="actions"><button id="go" class="btn btn-primary" disabled>Redact &amp; export</button><button id="clr" class="btn btn-secondary">Clear all</button></div>
+      <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+      <div id="libraryState" class="library-state">Loading…</div>
+      <div class="note"><strong>True redaction:</strong> on export every page is flattened to an image with the black boxes burned in &mdash; the original text/graphics under a box are gone, not just hidden. 100% offline.</div>
+    </div>
+    <div class="card"><div class="card-title"><h3>Drag to mark boxes</h3><span id="rc" class="badge">0 boxes</span></div><div style="overflow:auto"><canvas id="cv" class="work"></canvas></div></div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — Redact PDF</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/pdf-lib.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes}=FTX;
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+$('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF render</span> &nbsp; <span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} PDF engine</span>`;
+let file=null,pdf=null,cur=0,dispScale=1,pagePts=null;const rects={}; // {pageIndex:[{x,y,w,h} in points, top-left origin]}
+const cv=$('cv'),ctx=cv.getContext('2d');
+FTX.wireDrop('dropzone','fileInput',async list=>{const f=list[0];if(!f||FTX.extOf(f.name)!=='pdf'){FTX.status('status','Please choose a PDF.','bad');return;}file=f;pdf=await pdfjsLib.getDocument({data:new Uint8Array(await f.arrayBuffer())}).promise;cur=0;for(const k in rects)delete rects[k];$('fileList').className='file-list show';$('fileList').innerHTML=`<div class="file-row"><div class="file-kind">PDF</div><div class="file-meta"><strong>${escapeHtml(f.name)}</strong><span>${formatBytes(f.size)} · ${pdf.numPages} pages</span></div></div>`;$('pc').textContent=pdf.numPages+' pages';$('go').disabled=false;FTX.hideStatus('status');await draw();});
+$('clr').onclick=()=>{file=null;pdf=null;for(const k in rects)delete rects[k];$('fileList').className='file-list';$('fileList').innerHTML='';$('go').disabled=true;$('pc').textContent='—';$('pnav').textContent='—';$('rc').textContent='0 boxes';cv.width=cv.height=0;FTX.hideStatus('status');FTX.hideProgress('progress');};
+$('prev').onclick=async()=>{if(pdf&&cur>0){cur--;await draw();}};
+$('next').onclick=async()=>{if(pdf&&cur<pdf.numPages-1){cur++;await draw();}};
+$('undo').onclick=()=>{if(rects[cur]&&rects[cur].length){rects[cur].pop();paint();}};
+$('clrpage').onclick=()=>{rects[cur]=[];paint();};
+async function draw(){
+  if(!pdf)return;const page=await pdf.getPage(cur+1);pagePts=page.getViewport({scale:1});
+  dispScale=Math.min(560/pagePts.width,1.3);const vp=page.getViewport({scale:dispScale});
+  cv.width=Math.ceil(vp.width);cv.height=Math.ceil(vp.height);ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);
+  await page.render({canvasContext:ctx,viewport:vp}).promise;
+  window.__base=ctx.getImageData(0,0,cv.width,cv.height); // cache clean render
+  $('pnav').textContent=`${cur+1} / ${pdf.numPages}`;paint();
+}
+function paint(){
+  if(window.__base)ctx.putImageData(window.__base,0,0);
+  const list=rects[cur]||[];ctx.fillStyle='#000';
+  for(const r of list)ctx.fillRect(r.x*dispScale,r.y*dispScale,r.w*dispScale,r.h*dispScale);
+  if(sel){ctx.strokeStyle='#7a2434';ctx.lineWidth=2;ctx.setLineDash([6,4]);ctx.strokeRect(sel.x*dispScale,sel.y*dispScale,sel.w*dispScale,sel.h*dispScale);ctx.setLineDash([]);}
+  let n=0;for(const k in rects)n+=rects[k].length;$('rc').textContent=n+' boxes';
+}
+let down=null,sel=null;
+cv.style.cursor='crosshair';cv.style.touchAction='none';
+function pt(e){const r=cv.getBoundingClientRect();const sx=cv.width/(r.width||cv.width);return {x:(e.clientX-r.left)*sx/dispScale,y:(e.clientY-r.top)*sx/dispScale};}
+cv.addEventListener('pointerdown',e=>{if(!pdf)return;e.preventDefault();try{cv.setPointerCapture(e.pointerId);}catch(_){}down=pt(e);sel=null;});
+cv.addEventListener('pointermove',e=>{if(!down)return;const p=pt(e);sel={x:Math.min(down.x,p.x),y:Math.min(down.y,p.y),w:Math.abs(p.x-down.x),h:Math.abs(p.y-down.y)};paint();});
+cv.addEventListener('pointerup',e=>{if(!down)return;down=null;if(sel&&sel.w>3&&sel.h>3){(rects[cur]=rects[cur]||[]).push(sel);}sel=null;paint();});
+$('go').onclick=async()=>{
+  if(!pdf)return;let total=0;for(const k in rects)total+=rects[k].length;
+  if(!total){FTX.status('status','Draw at least one box to redact.','bad');return;}
+  $('go').disabled=true;FTX.progress('progress',5);
+  try{
+    const dpi=+$('dpi').value,scale=dpi/72;const {PDFDocument}=PDFLib;const out=await PDFDocument.create();
+    for(let p=0;p<pdf.numPages;p++){
+      FTX.status('status',`Flattening page ${p+1}/${pdf.numPages}…`,'info');
+      const page=await pdf.getPage(p+1);const pts=page.getViewport({scale:1});const vp=page.getViewport({scale});
+      const c=document.createElement('canvas');c.width=Math.ceil(vp.width);c.height=Math.ceil(vp.height);
+      const cx=c.getContext('2d');cx.fillStyle='#fff';cx.fillRect(0,0,c.width,c.height);
+      await page.render({canvasContext:cx,viewport:vp}).promise;
+      cx.fillStyle='#000';for(const r of (rects[p]||[]))cx.fillRect(r.x*scale,r.y*scale,r.w*scale,r.h*scale);
+      const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',0.9));
+      const jpg=await out.embedJpg(new Uint8Array(await blob.arrayBuffer()));
+      const pg=out.addPage([pts.width,pts.height]);pg.drawImage(jpg,{x:0,y:0,width:pts.width,height:pts.height});
+      FTX.progress('progress',5+Math.round((p+1)/pdf.numPages*90));
+    }
+    saveBytes(await out.save(),stripExt(file.name)+'-redacted.pdf','application/pdf');
+    FTX.status('status',`Redacted ${total} area(s) across ${pdf.numPages} pages.`,'good');FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),800);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Images → PDF — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>Images &rarr; PDF</h1><p class="sub">Combine JPG / PNG into one PDF</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><h3>Upload images</h3><span class="badge">JPG · PNG</span></div>
+      <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop images</strong><p>Added in order; drag rows to reorder.</p><div class="only">JPG · JPEG · PNG</div></div>
+      <input id="fileInput" type="file" accept=".jpg,.jpeg,.png" multiple>
+      <div id="fileList" class="file-list"></div>
+      <div class="row">
+        <div class="field"><label>Page size</label><select id="size"><option value="fit" selected>Fit to image</option><option value="a4p">A4 portrait</option><option value="a4l">A4 landscape</option></select></div>
+        <div class="field"><label>Margin (pt)</label><input id="margin" type="number" value="0" min="0" max="120"></div>
+      </div>
+      <div class="actions"><button id="go" class="btn btn-primary" disabled>Create PDF</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+      <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+      <div id="libraryState" class="library-state">Loading…</div>
+      <div class="note">100% offline.</div>
+    </div>
+    <div class="card"><div class="card-title"><h3>Order</h3><span id="cnt" class="badge">0</span></div><div id="thumbs" class="thumbs"></div></div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — Images → PDF</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf-lib.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,formatBytes,escapeHtml,saveBytes}=FTX;let imgs=[];
+$('libraryState').innerHTML=`<span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} PDF engine</span>`;
+FTX.wireDrop('dropzone','fileInput',list=>{for(const f of list){if(/^image\/(jpeg|png)$/.test(f.type)||/\.(jpe?g|png)$/i.test(f.name))imgs.push(f);}render();});
+$('clr').onclick=()=>{imgs=[];render();FTX.hideStatus('status');FTX.hideProgress('progress');};
+function render(){
+  $('cnt').textContent=imgs.length;$('go').disabled=!imgs.length;
+  const box=$('fileList');if(!imgs.length){box.className='file-list';box.innerHTML='';$('thumbs').innerHTML='';return;}
+  box.className='file-list show';
+  box.innerHTML=imgs.map((f,i)=>`<div class="file-row" draggable="true" data-i="${i}"><span class="handle">⠿</span><div class="file-kind">${(FTX.extOf(f.name)||'IMG').toUpperCase()}</div><div class="file-meta"><strong>${escapeHtml(f.name)}</strong><span>${formatBytes(f.size)}</span></div><button class="file-remove" data-i="${i}">✕</button></div>`).join('');
+  box.querySelectorAll('.file-remove').forEach(b=>b.onclick=e=>{imgs.splice(+e.target.dataset.i,1);render();});
+  let dragI=null;
+  box.querySelectorAll('.file-row').forEach(row=>{
+    row.addEventListener('dragstart',e=>{dragI=+row.dataset.i;});
+    row.addEventListener('dragover',e=>e.preventDefault());
+    row.addEventListener('drop',e=>{e.preventDefault();const to=+row.dataset.i;if(dragI===null||dragI===to)return;const m=imgs.splice(dragI,1)[0];imgs.splice(to,0,m);dragI=null;render();});
+  });
+  $('thumbs').innerHTML='';imgs.forEach((f,i)=>{const t=document.createElement('div');t.className='thumb';t.innerHTML=`<div class="tnum">${i+1}</div>`;const im=new Image();im.src=URL.createObjectURL(f);t.appendChild(im);$('thumbs').appendChild(t);});
+}
+$('go').onclick=async()=>{
+  if(!imgs.length)return;$('go').disabled=true;FTX.progress('progress',3);
+  try{
+    const {PDFDocument}=PDFLib;const doc=await PDFDocument.create();
+    const size=$('size').value,margin=+$('margin').value||0;
+    const A4=[595.28,841.89];
+    for(let i=0;i<imgs.length;i++){
+      FTX.status('status',`Adding image ${i+1}/${imgs.length}…`,'info');
+      const f=imgs[i];const bytes=new Uint8Array(await f.arrayBuffer());
+      const isPng=/png/i.test(f.type)||/\.png$/i.test(f.name);
+      const img=isPng?await doc.embedPng(bytes):await doc.embedJpg(bytes);
+      let pw,ph;
+      if(size==='fit'){pw=img.width+margin*2;ph=img.height+margin*2;}
+      else{[pw,ph]=size==='a4l'?[A4[1],A4[0]]:A4;}
+      const page=doc.addPage([pw,ph]);
+      const availW=pw-margin*2,availH=ph-margin*2;
+      const s=Math.min(availW/img.width,availH/img.height, size==='fit'?1:Infinity);
+      const w=img.width*s,h=img.height*s;
+      page.drawImage(img,{x:(pw-w)/2,y:(ph-h)/2,width:w,height:h});
+      FTX.progress('progress',Math.round((i+1)/imgs.length*88)+5);
+    }
+    const out=await doc.save();saveBytes(out,'finotrix-images.pdf','application/pdf');
+    FTX.status('status','PDF created.','good');FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),700);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>To Markdown — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar">
+    <div class="brand"><div class="logo">F</div><div><h1>To Markdown</h1><p class="sub">PDF · Word · Excel · CSV → Markdown / TXT / JSON</p></div></div>
+    <nav><a class="home" href="../index.html">&larr; All tools</a></nav>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><h3>Upload documents</h3><span class="badge">PDF · DOCX · XLSX · CSV</span></div>
+      <div id="dropzone" class="dropzone" role="button" tabindex="0">
+        <div class="upload-icon">&#8681;</div><strong>Click to choose or drag &amp; drop</strong>
+        <p>One or more PDF, Word, Excel or CSV files.</p>
+        <div class="only">PDF · DOCX · XLSX · XLS · CSV</div>
+      </div>
+      <input id="fileInput" type="file" multiple accept=".pdf,.docx,.xlsx,.xls,.csv">
+      <div id="fileList" class="file-list"></div>
+      <div class="options">
+        <label class="opt"><input id="smartStructure" type="checkbox" checked><span><strong>Smart structure</strong><br>Detect headings, lists, paragraphs and likely PDF tables.</span></label>
+        <label class="opt"><input id="ocrFallback" type="checkbox" checked><span><strong>OCR for scanned PDF pages</strong><br>Reads image-only pages with the bundled offline engine.</span></label>
+        <label class="opt"><input id="removeRepeats" type="checkbox" checked><span><strong>Remove repeated headers / footers</strong></span></label>
+        <label class="opt"><input id="pageSeparators" type="checkbox"><span><strong>Include page separators</strong></span></label>
+      </div>
+      <div class="actions"><button id="convertBtn" class="btn btn-primary" disabled>Convert</button><button id="clearBtn" class="btn btn-secondary">Clear</button></div>
+      <div id="status" class="status"></div>
+      <div id="progress" class="progress"><div></div></div>
+      <div id="libraryState" class="library-state">Loading libraries…</div>
+      <div class="note"><strong>Private:</strong> processed entirely in your browser. 100% offline including OCR.</div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><h3>Markdown preview</h3><span id="resultBadge" class="badge">WAITING</span></div>
+      <div class="preview-top">
+        <div class="stat"><strong id="wordCount">0</strong><span>Words</span></div>
+        <div class="stat"><strong id="charCount">0</strong><span>Characters</span></div>
+        <div class="stat"><strong id="tokenCount">0</strong><span>Est. tokens</span></div>
+      </div>
+      <textarea id="preview" class="preview" spellcheck="false" placeholder="Converted Markdown appears here…"></textarea>
+      <div class="actions"><button id="dlMd" class="btn btn-primary" disabled>Download .md</button><button id="dlTxt" class="btn btn-secondary" disabled>.txt</button><button id="dlJson" class="btn btn-secondary" disabled>.json</button><button id="copyBtn" class="btn btn-secondary" disabled>Copy</button></div>
+    </div>
+  </div>
+
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — To Markdown</div><div>100% offline.</div></footer>
+</div>
+
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/mammoth.browser.min.js"></script>
+<script src="../lib/turndown.js"></script>
+<script src="../lib/turndown-plugin-gfm.js"></script>
+<script src="../lib/xlsx.full.min.js"></script>
+<script src="../lib/tesseract.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(() => {
+'use strict';
+const {$,toast,formatBytes,extOf,stripExt,escapeHtml,saveBlob}=FTX;
+if(window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+const state={files:[],markdown:''};
+const OK=['pdf','docx','xlsx','xls','csv'];
+
+function checkLibs(){
+  const parts=[['PDF',!!window.pdfjsLib],['DOCX',!!window.mammoth],['Markdown',!!window.TurndownService],['Excel/CSV',!!window.XLSX],['OCR',!!window.Tesseract]];
+  $('libraryState').innerHTML=parts.map(([n,ok])=>`<span class="${ok?'ok':'bad'}">${ok?'✓':'✕'} ${n}</span>`).join(' &nbsp; ');
+  updateBtn();
+}
+window.addEventListener('load',()=>setTimeout(checkLibs,150));
+FTX.wireDrop('dropzone','fileInput',handleFiles);
+$('clearBtn').onclick=clearAll; $('convertBtn').onclick=convertAll;
+$('dlMd').onclick=()=>dl('.md','text/markdown'); $('dlTxt').onclick=dlTxt; $('dlJson').onclick=dlJson;
+$('copyBtn').onclick=copy; $('preview').addEventListener('input',()=>stats($('preview').value));
+
+function validFile(f){return f&&OK.includes(extOf(f.name));}
+function handleFiles(list){
+  const arr=Array.from(list||[]); const valid=arr.filter(validFile); const bad=arr.length-valid.length;
+  if(bad) FTX.status('status',`Ignored ${bad} unsupported file(s).`, valid.length?'info':'bad');
+  for(const f of valid) if(!state.files.some(x=>x.file.name===f.name&&x.file.size===f.size)) state.files.push({file:f,ext:extOf(f.name),markdown:''});
+  state.markdown=''; $('preview').value=''; $('resultBadge').textContent='READY'; resetExports(); stats(''); render();
+}
+function render(){
+  const box=$('fileList');
+  if(!state.files.length){box.classList.remove('show');box.innerHTML='';updateBtn();return;}
+  box.classList.add('show');
+  box.innerHTML=state.files.map((f,i)=>`<div class="file-row"><div class="file-kind">${f.ext.toUpperCase()}</div><div class="file-meta"><strong>${escapeHtml(f.file.name)}</strong><span>${formatBytes(f.file.size)}</span></div><button class="file-remove" data-i="${i}">✕</button></div>`).join('');
+  box.querySelectorAll('.file-remove').forEach(b=>b.onclick=e=>{state.files.splice(+e.target.dataset.i,1);render();});
+  updateBtn();
+}
+function clearAll(){state.files=[];state.markdown='';$('preview').value='';$('resultBadge').textContent='WAITING';resetExports();stats('');FTX.hideProgress('progress');FTX.hideStatus('status');render();}
+function resetExports(){['dlMd','dlTxt','dlJson','copyBtn'].forEach(id=>$(id).disabled=true);}
+function libReady(ext){if(ext==='pdf')return!!window.pdfjsLib;if(ext==='docx')return!!window.mammoth&&!!window.TurndownService;return!!window.XLSX;}
+function updateBtn(){$('convertBtn').disabled=!(state.files.length&&state.files.every(f=>libReady(f.ext)));}
+
+async function convertAll(){
+  if(!state.files.length)return;
+  $('convertBtn').disabled=true; FTX.progress('progress',3); $('resultBadge').textContent='CONVERTING';
+  try{
+    for(let i=0;i<state.files.length;i++){
+      const f=state.files[i];
+      FTX.status('status',`Converting ${i+1}/${state.files.length}: ${f.file.name}…`,'info');
+      let md='';
+      if(f.ext==='pdf')md=await convertPdf(f.file);
+      else if(f.ext==='docx')md=await convertDocx(f.file);
+      else md=await convertSheet(f);
+      f.markdown=finalCleanup(md,stripExt(f.file.name));
+      FTX.progress('progress',Math.round(((i+1)/state.files.length)*90)+5);
+    }
+    const combined=combine(state.files); state.markdown=combined; $('preview').value=combined; stats(combined);
+    const ok=!!combined.trim(); ['dlMd','dlTxt','dlJson','copyBtn'].forEach(id=>$(id).disabled=!ok);
+    $('resultBadge').textContent='DONE'; FTX.progress('progress',100); FTX.status('status','Conversion complete.','good'); setTimeout(()=>FTX.hideProgress('progress'),700);
+  }catch(err){console.error(err);$('resultBadge').textContent='FAILED';FTX.status('status',err.message||'Conversion failed.','bad');FTX.hideProgress('progress');}
+  updateBtn();
+}
+function combine(files){const multi=files.length>1;const parts=[];for(const f of files){let md=(f.markdown||'').trim();if(!md)continue;if(multi){md=md.replace(/^#\s+.*\n\n?/,'');parts.push(`# ${f.file.name}\n\n${md}`);}else parts.push(md);}return parts.join('\n\n\n---\n\n\n').trim()+'\n';}
+
+async function convertDocx(file){
+  const ab=await file.arrayBuffer();
+  const styleMap=["p[style-name='Title'] => h1:fresh","p[style-name='Heading 1'] => h1:fresh","p[style-name='Heading 2'] => h2:fresh","p[style-name='Heading 3'] => h3:fresh"];
+  const result=await mammoth.convertToHtml({arrayBuffer:ab},{styleMap,includeDefaultStyleMap:true});
+  const td=new TurndownService({headingStyle:'atx',bulletListMarker:'-',codeBlockStyle:'fenced'});
+  if(window.turndownPluginGfm&&turndownPluginGfm.gfm) td.use(turndownPluginGfm.gfm);
+  td.addRule('br',{filter:'br',replacement:()=>'  \n'});
+  let md=td.turndown(result.value||'');
+  if(!$('smartStructure').checked)md=stripStruct(md);
+  return md;
+}
+async function convertSheet(f){
+  if(f.ext==='csv'){const rows=parseCsv(await f.file.text());return rows.length?sheetTable(rows):'';}
+  const wb=XLSX.read(await f.file.arrayBuffer(),{type:'array',cellDates:true});
+  const out=[],multi=wb.SheetNames.length>1;
+  for(const n of wb.SheetNames){const rows=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,blankrows:false,defval:'',raw:false});if(!rows.length)continue;if(multi)out.push('## '+n);out.push(sheetTable(rows));}
+  return out.join('\n\n');
+}
+function parseCsv(text){const rows=[];let row=[],cur='',q=false;const s=String(text||'').replace(/\r\n/g,'\n').replace(/\r/g,'\n');for(let i=0;i<s.length;i++){const c=s[i];if(q){if(c==='"'){if(s[i+1]==='"'){cur+='"';i++;}else q=false;}else cur+=c;}else{if(c==='"')q=true;else if(c===','){row.push(cur);cur='';}else if(c==='\n'){row.push(cur);rows.push(row);row=[];cur='';}else cur+=c;}}if(cur.length||row.length){row.push(cur);rows.push(row);}return rows.filter(r=>r.some(x=>String(x).trim()!==''));}
+function sheetTable(rows){const cols=Math.max(1,...rows.map(r=>r.length));const esc=s=>String(s).replace(/\|/g,'\\|').replace(/\s+/g,' ').trim();const norm=rows.map(r=>Array.from({length:cols},(_,i)=>esc(r[i]==null?'':r[i])));const sep=Array(cols).fill('---');return['| '+norm[0].join(' | ')+' |','| '+sep.join(' | ')+' |',...norm.slice(1).map(r=>'| '+r.join(' | ')+' |')].join('\n');}
+
+async function convertPdf(file){
+  const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+  const pages=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    FTX.status('status',`PDF page ${p}/${pdf.numPages}…`,'info');
+    const page=await pdf.getPage(p); let rec=await extractPage(page,p);
+    if(norm(rec.raw).length<30 && $('ocrFallback').checked && window.Tesseract){
+      try{const ocr=await ocrPage(page);if(norm(ocr).length>norm(rec.raw).length)rec={pageNum:p,raw:ocr,lines:plainLines(ocr)};}catch(e){console.warn(e);}
+    }
+    pages.push(rec);
+  }
+  try{await pdf.destroy();}catch(e){}
+  if($('removeRepeats').checked&&pages.length>1)dropMargins(pages);
+  const chunks=[];
+  for(const pg of pages){let part=$('smartStructure').checked?linesToMd(pg.lines):pg.lines.map(x=>x.text).join('\n');part=part.trim();if(!part)continue;if($('pageSeparators').checked)chunks.push(`<!-- Page ${pg.pageNum} -->\n\n${part}`);else chunks.push(part);}
+  return chunks.join('\n\n');
+}
+async function extractPage(page,pageNum){
+  const tc=await page.getTextContent();
+  const items=(tc.items||[]).filter(i=>i.str&&i.str.trim()).map(i=>({text:i.str.replace(/ /g,' ').trim(),x:+(i.transform?.[4]||0),y:+(i.transform?.[5]||0),width:+(i.width||0),size:Math.max(1,Math.abs(+(i.transform?.[3]||0))||10)}));
+  const rows=[];const tol=3.8;
+  for(const it of items){let r=rows.find(r=>Math.abs(r.y-it.y)<=tol);if(!r){r={y:it.y,items:[]};rows.push(r);}r.items.push(it);}
+  rows.sort((a,b)=>b.y-a.y);rows.forEach(r=>r.items.sort((a,b)=>a.x-b.x));
+  const lines=rows.map(r=>{let text='',le=null,cells=[],cell='',sizes=[];for(const it of r.items){const gap=le===null?0:it.x-le;if(le!==null&&gap>30){if(cell.trim())cells.push(cell.trim());cell=it.text;text+='    '+it.text;}else{cell+=(cell?' ':'')+it.text;text+=(text&&gap>5?' ':'')+it.text;}le=it.x+(it.width||it.text.length*5);sizes.push(it.size);}if(cell.trim())cells.push(cell.trim());return{text:clean(text),size:median(sizes),cells};}).filter(l=>l.text);
+  return{pageNum,raw:lines.map(l=>l.text).join('\n'),lines};
+}
+async function ocrPage(page){
+  const vp=page.getViewport({scale:1.8});const cv=document.createElement('canvas');cv.width=Math.ceil(vp.width);cv.height=Math.ceil(vp.height);
+  const ctx=cv.getContext('2d',{willReadFrequently:true});await page.render({canvasContext:ctx,viewport:vp}).promise;
+  const w=await FTX.getOcrWorker();const res=await w.recognize(cv);return res.data?.text||'';
+}
+function plainLines(t){return String(t||'').split(/\r?\n/).map(x=>({text:clean(x),size:10,cells:[clean(x)]})).filter(x=>x.text);}
+function dropMargins(pages){const counts=new Map(),th=Math.max(2,Math.ceil(pages.length*.55));for(const p of pages){const cand=[...p.lines.slice(0,2),...p.lines.slice(-2)];const seen=new Set();for(const l of cand){const n=nl(l.text);if(n&&n.length>2&&!seen.has(n)){counts.set(n,(counts.get(n)||0)+1);seen.add(n);}}}const rm=new Set([...counts].filter(([,c])=>c>=th).map(([n])=>n));for(const p of pages){p.lines=p.lines.filter(l=>!rm.has(nl(l.text))&&!/^\s*(page\s*)?\d+(\s*(of|\/)\s*\d+)?\s*$/i.test(l.text));}}
+function linesToMd(lines){if(!lines.length)return'';const body=median(lines.map(l=>l.size).filter(n=>n>0))||10;const out=[];let para=[];const flush=()=>{if(para.length){out.push(joinPara(para.map(x=>x.text)));para=[];}};for(let i=0;i<lines.length;i++){const l=lines[i],t=l.text.trim();if(!t)continue;const next=lines[i+1];if(l.cells&&l.cells.length>=2){const block=[];let j=i;while(j<lines.length&&lines[j].cells&&lines[j].cells.length>=2&&lines[j].cells.length<=8){block.push(lines[j]);j++;}if(block.length>=2){flush();out.push(tbl(block.map(x=>x.cells)));i=j-1;continue;}}const bl=t.match(/^([•●▪◦*\-–—]|\d+[.)]|[A-Za-z][.)])\s+(.+)/);if(bl){flush();const m=/^\d/.test(bl[1])?bl[1].replace(')','.'):'-';out.push(`${m} ${bl[2].trim()}`);continue;}const lv=hlvl(l,body);if(lv){flush();out.push(`${'#'.repeat(lv)} ${t.replace(/[:\-–—]+$/,'').trim()}`);continue;}if(/^https?:\/\//i.test(t)){flush();out.push(t);continue;}para.push(l);if(/[.!?;:]$/.test(t)||!next||(next&&(hlvl(next,body)||/^([•●*\-]|\d+[.)])\s+/.test(next.text))))flush();}flush();return out.filter(Boolean).join('\n\n');}
+function hlvl(line,body){const t=line.text.trim();if(t.length<2||t.length>130)return 0;const r=(line.size||body)/body;if(r>=1.65)return 1;if(r>=1.38)return 2;if(r>=1.18)return 3;const L=t.replace(/[^A-Za-z]/g,'');if(t.length<=70&&L.length>=5&&t===t.toUpperCase()&&!/[.!?]$/.test(t))return 2;return 0;}
+function tbl(rows){const cols=Math.max(...rows.map(r=>r.length));const N=rows.map(r=>Array.from({length:cols},(_,i)=>String(r[i]||'').replace(/\|/g,'\\|').replace(/\s+/g,' ').trim()));const sep=Array(cols).fill('---');return['| '+N[0].join(' | ')+' |','| '+sep.join(' | ')+' |',...N.slice(1).map(r=>'| '+r.join(' | ')+' |')].join('\n');}
+function joinPara(parts){let s='';for(const p0 of parts){let p=p0.trim();if(!p)continue;if(s.endsWith('-')&&/^[a-z]/.test(p))s=s.slice(0,-1)+p;else s+=(s?' ':'')+p;}return s.replace(/\s+/g,' ').trim();}
+function stripStruct(md){return String(md||'').replace(/^#{1,6}\s+/gm,'').replace(/^[-*+]\s+/gm,'').replace(/^\d+\.\s+/gm,'').replace(/\*\*([^*]+)\*\*/g,'$1').replace(/\*([^*]+)\*/g,'$1');}
+function finalCleanup(md,title){let s=String(md||'').replace(/ /g,' ').replace(/[ \t]+\n/g,'\n').replace(/\n{4,}/g,'\n\n\n').trim();if(s&&!/^#{1,6}\s+/.test(s))s=`# ${title}\n\n${s}`;return s.trim()+'\n';}
+function clean(s){return String(s||'').replace(/ /g,' ').replace(/[ \t]+/g,' ').trim();}
+function norm(s){return String(s||'').replace(/\s+/g,' ').trim();}
+function nl(s){return norm(s).toLowerCase().replace(/[\d\s]+/g,' ').trim();}
+function median(a){const v=(a||[]).filter(Number.isFinite).sort((x,y)=>x-y);if(!v.length)return 0;const m=Math.floor(v.length/2);return v.length%2?v[m]:(v[m-1]+v[m])/2;}
+function stats(t){t=String(t||'');$('charCount').textContent=t.length.toLocaleString();$('wordCount').textContent=(t.trim()?t.trim().split(/\s+/).length:0).toLocaleString();$('tokenCount').textContent=Math.ceil(t.length/4).toLocaleString();}
+function baseName(){return state.files.length===1?stripExt(state.files[0].file.name):'finotrix-converted';}
+function dl(ext,mime){const t=$('preview').value||state.markdown;if(!t.trim())return;saveBlob(new Blob([t],{type:mime+';charset=utf-8'}),baseName()+ext);}
+function dlTxt(){const t=$('preview').value||state.markdown;if(!t.trim())return;const p=stripStruct(t).replace(/^\s*\|?\s*-{3,}.*$/gm,'').replace(/\s*\|\s*/g,'  ').replace(/\n{3,}/g,'\n\n').trim()+'\n';saveBlob(new Blob([p],{type:'text/plain;charset=utf-8'}),baseName()+'.txt');}
+function dlJson(){if(!state.files.length)return;const payload={generatedBy:'Finotrix Toolkit',files:state.files.map(f=>({name:f.file.name,type:f.ext,markdown:f.markdown||''})),combinedMarkdown:$('preview').value||state.markdown};saveBlob(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}),baseName()+'.json');}
+async function copy(){const t=$('preview').value||state.markdown;if(!t.trim())return;try{await navigator.clipboard.writeText(t);toast('Copied');}catch(e){$('preview').select();document.execCommand('copy');toast('Copied');}}
+})();
+</script>
+</body>
+</html>

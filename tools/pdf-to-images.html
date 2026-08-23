@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF → Images — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>PDF &rarr; JPG / PNG</h1><p class="sub">Render each page to an image</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><h3>Upload PDF</h3><span class="badge">PDF</span></div>
+      <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop a PDF</strong><p>Each page becomes an image.</p><div class="only">PDF</div></div>
+      <input id="fileInput" type="file" accept=".pdf">
+      <div id="fileList" class="file-list"></div>
+      <div class="row">
+        <div class="field"><label>Format</label><select id="fmt"><option value="jpg">JPG</option><option value="png">PNG</option></select></div>
+        <div class="field"><label>Quality / resolution</label><select id="scale"><option value="1.5">Screen (1.5×)</option><option value="2" selected>High (2×)</option><option value="3">Print (3×)</option><option value="4">Max (4×)</option></select></div>
+        <div class="field" id="qWrap"><label>JPG quality</label><select id="q"><option value="0.92" selected>92%</option><option value="0.8">80%</option><option value="0.7">70%</option></select></div>
+      </div>
+      <div class="actions"><button id="go" class="btn btn-primary" disabled>Convert</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+      <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+      <div id="libraryState" class="library-state">Loading…</div>
+      <div class="note">Multiple pages download as a single .zip. 100% offline.</div>
+    </div>
+    <div class="card"><div class="card-title"><h3>Preview</h3><span id="cnt" class="badge">—</span></div><div id="thumbs" class="thumbs"></div></div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — PDF → Images</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/jszip.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,toast,formatBytes,stripExt,saveBlob}=FTX;
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+let file=null,rendered=[];
+$('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF</span> &nbsp; <span class="${window.JSZip?'ok':'bad'}">${window.JSZip?'✓':'✕'} ZIP</span>`;
+$('fmt').onchange=()=>{$('qWrap').style.display=$('fmt').value==='jpg'?'':'none';};
+FTX.wireDrop('dropzone','fileInput',list=>{const f=list[0];if(!f||FTX.extOf(f.name)!=='pdf'){FTX.status('status','Please choose a PDF.','bad');return;}file=f;$('fileList').className='file-list show';$('fileList').innerHTML=`<div class="file-row"><div class="file-kind">PDF</div><div class="file-meta"><strong>${FTX.escapeHtml(f.name)}</strong><span>${formatBytes(f.size)}</span></div></div>`;$('go').disabled=false;FTX.hideStatus('status');$('thumbs').innerHTML='';});
+$('clr').onclick=()=>{file=null;$('fileList').className='file-list';$('fileList').innerHTML='';$('go').disabled=true;$('thumbs').innerHTML='';$('cnt').textContent='—';FTX.hideStatus('status');FTX.hideProgress('progress');};
+$('go').onclick=async()=>{
+  if(!file)return;$('go').disabled=true;$('thumbs').innerHTML='';rendered=[];FTX.progress('progress',3);
+  try{
+    const fmt=$('fmt').value,scale=+$('scale').value,q=+$('q').value;
+    const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+    for(let p=1;p<=pdf.numPages;p++){
+      FTX.status('status',`Rendering page ${p}/${pdf.numPages}…`,'info');
+      const page=await pdf.getPage(p);const vp=page.getViewport({scale});
+      const cv=document.createElement('canvas');cv.width=Math.ceil(vp.width);cv.height=Math.ceil(vp.height);
+      const ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);
+      await page.render({canvasContext:ctx,viewport:vp}).promise;
+      const mime=fmt==='png'?'image/png':'image/jpeg';
+      const blob=await new Promise(r=>cv.toBlob(r,mime,fmt==='jpg'?q:undefined));
+      rendered.push({name:`${stripExt(file.name)}-p${String(p).padStart(2,'0')}.${fmt}`,blob});
+      const t=document.createElement('div');t.className='thumb';const url=URL.createObjectURL(blob);
+      t.innerHTML=`<div class="tnum">${p}</div>`;const im=new Image();im.src=url;t.appendChild(im);
+      const dl=document.createElement('div');dl.className='tools';dl.innerHTML=`<button>Save</button>`;dl.firstChild.onclick=()=>saveBlob(blob,rendered[p-1].name);t.appendChild(dl);
+      $('thumbs').appendChild(t);
+      FTX.progress('progress',Math.round(p/pdf.numPages*90)+5);
+    }
+    await pdf.destroy();$('cnt').textContent=rendered.length+' page(s)';
+    if(rendered.length===1){saveBlob(rendered[0].blob,rendered[0].name);FTX.status('status','Saved image.','good');}
+    else{const zip=new JSZip();rendered.forEach(r=>zip.file(r.name,r.blob));const zb=await zip.generateAsync({type:'blob'});saveBlob(zb,stripExt(file.name)+'-images.zip');FTX.status('status',`Saved ${rendered.length} images as .zip.`,'good');}
+    FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),700);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+})();
+</script>
+</body>
+</html>

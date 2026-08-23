@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF Unlock — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>Unlock PDF</h1><p class="sub">Remove the password from a PDF you can open</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="card" style="max-width:680px">
+    <div class="card-title"><h3>Upload PDF</h3><span class="badge">PDF</span></div>
+    <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop a PDF</strong><p>For your own document that you have the right to open.</p><div class="only">PDF</div></div>
+    <input id="fileInput" type="file" accept=".pdf">
+    <div id="fileList" class="file-list"></div>
+    <div class="field"><label>Password (if it asks for one to open)</label><input id="pw" type="password" placeholder="Leave blank for permission-only locks"></div>
+    <div class="actions"><button id="go" class="btn btn-primary" disabled>Unlock</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+    <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+    <div id="libraryState" class="library-state">Loading…</div>
+    <div class="note"><strong>Scope:</strong> this only removes protection from a document you can already open — you supply the password. It does not crack unknown passwords. Password-decrypted files are rebuilt as image pages; permission-only locks keep their text. 100% offline.</div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — Unlock PDF</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/pdf-lib.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes}=FTX;let file=null;
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+$('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF</span> &nbsp; <span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} PDF engine</span>`;
+FTX.wireDrop('dropzone','fileInput',list=>{const f=list[0];if(!f||FTX.extOf(f.name)!=='pdf'){FTX.status('status','Please choose a PDF.','bad');return;}file=f;$('fileList').className='file-list show';$('fileList').innerHTML=`<div class="file-row"><div class="file-kind">PDF</div><div class="file-meta"><strong>${escapeHtml(f.name)}</strong><span>${formatBytes(f.size)}</span></div></div>`;$('go').disabled=false;FTX.hideStatus('status');});
+$('clr').onclick=()=>{file=null;$('fileList').className='file-list';$('fileList').innerHTML='';$('pw').value='';$('go').disabled=true;FTX.hideStatus('status');FTX.hideProgress('progress');};
+$('go').onclick=async()=>{
+  if(!file)return;$('go').disabled=true;FTX.progress('progress',6);
+  const pw=$('pw').value;const {PDFDocument}=PDFLib;
+  try{
+    const buf=new Uint8Array(await file.arrayBuffer());
+    if(pw){
+      // decrypt with the supplied password via pdf.js, rebuild as image pages
+      const pdf=await pdfjsLib.getDocument({data:buf,password:pw}).promise;
+      const out=await PDFDocument.create();
+      for(let p=1;p<=pdf.numPages;p++){
+        FTX.status('status',`Unlocking page ${p}/${pdf.numPages}…`,'info');
+        const page=await pdf.getPage(p);const vpPts=page.getViewport({scale:1});const vp=page.getViewport({scale:2});
+        const cv=document.createElement('canvas');cv.width=Math.ceil(vp.width);cv.height=Math.ceil(vp.height);
+        const ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);
+        await page.render({canvasContext:ctx,viewport:vp}).promise;
+        const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',0.92));
+        const jpg=await out.embedJpg(new Uint8Array(await blob.arrayBuffer()));
+        const pg=out.addPage([vpPts.width,vpPts.height]);pg.drawImage(jpg,{x:0,y:0,width:vpPts.width,height:vpPts.height});
+        FTX.progress('progress',Math.round(p/pdf.numPages*85)+8);
+      }
+      await pdf.destroy();
+      saveBytes(await out.save(),stripExt(file.name)+'-unlocked.pdf','application/pdf');
+    }else{
+      // permission-only lock: load ignoring encryption and re-save unencrypted (text preserved)
+      const doc=await PDFDocument.load(buf,{ignoreEncryption:true});
+      saveBytes(await doc.save(),stripExt(file.name)+'-unlocked.pdf','application/pdf');
+    }
+    FTX.status('status','Unlocked PDF saved.','good');FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),700);
+  }catch(e){
+    console.error(e);
+    const msg=/password/i.test(e.message||'')?'Wrong or missing password — enter the password you use to open this PDF.':(e.message||'Failed.');
+    FTX.status('status',msg,'bad');FTX.hideProgress('progress');
+  }
+  $('go').disabled=false;
+};
+})();
+</script>
+</body>
+</html>

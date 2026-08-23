@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Finotrix Toolkit</title>
+<link rel="stylesheet" href="css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar">
+    <div class="brand">
+      <div class="logo">F</div>
+      <div><h1>Finotrix Toolkit</h1><p class="sub">Document &amp; image tools &mdash; 100% offline</p></div>
+    </div>
+    <nav><a class="home" href="index.html">Home</a></nav>
+  </div>
+
+  <section class="hero">
+    <h2>Every document tool, on your machine.</h2>
+    <p>Convert, split, compress, organise and edit PDFs and images &mdash; entirely in your browser. Nothing is uploaded, no internet is used. Built for confidential client work.</p>
+    <div class="offline-pill">100% offline &middot; nothing leaves this computer</div>
+  </section>
+
+  <div class="toolsearch"><input id="toolSearch" type="text" placeholder="Search 21 tools&hellip;  (e.g. HDFC, watermark, OCR)" autocomplete="off"></div>
+  <div id="noResults" class="note" style="display:none">No tools match that search.</div>
+
+  <div class="group"><h3>Convert</h3><div class="rule"></div></div>
+  <div class="tiles">
+    <a class="tile" href="tools/convert-md.html"><div class="ic">&#8681;</div><h4>To Markdown</h4><p>PDF, Word, Excel &amp; CSV &rarr; clean Markdown / TXT / JSON. OCR for scans.</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/pdf-to-word.html"><div class="ic">&#128196;</div><h4>PDF &rarr; Word</h4><p>Editable (rebuilds real Word tables/headings) or visual-exact (page images).</p><span class="flag full">2 modes</span></a>
+    <a class="tile" href="tools/pdf-to-excel.html"><div class="ic">&#128202;</div><h4>PDF &rarr; Excel</h4><p>Batch tables to .xlsx &mdash; plus an HDFC bank-statement mode; merge or one file each.</p><span class="flag full">Batch + HDFC</span></a>
+    <a class="tile" href="tools/pdf-to-images.html"><div class="ic">&#128247;</div><h4>PDF &rarr; JPG / PNG</h4><p>Render each page to an image at your chosen quality.</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/images-to-pdf.html"><div class="ic">&#128206;</div><h4>Images &rarr; PDF</h4><p>Combine JPG / PNG into a single PDF.</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/scan-to-pdf.html"><div class="ic">&#128247;</div><h4>Scan to PDF</h4><p>Capture pages with your camera into a PDF.</p><span class="flag full">Full</span></a>
+  </div>
+
+  <div class="group"><h3>PDF tools</h3><div class="rule"></div></div>
+  <div class="tiles">
+    <a class="tile" href="tools/pdf-split.html"><div class="ic">&#9986;</div><h4>Split</h4><p>Extract page ranges or burst into single pages.</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/pdf-organise.html"><div class="ic">&#9783;</div><h4>Merge &amp; Organise</h4><p>Combine files, reorder, rotate and delete pages.</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/pdf-compress.html"><div class="ic">&#128449;</div><h4>Compress</h4><p>Shrink file size by downsampling embedded images.</p><span class="flag partial">Image-heavy</span></a>
+    <a class="tile" href="tools/pdf-unlock.html"><div class="ic">&#128275;</div><h4>Unlock</h4><p>Remove the password from a PDF you can open (you supply it).</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/pdf-dpi.html"><div class="ic">&#128200;</div><h4>DPI Converter</h4><p>Rasterise pages to a target DPI (for print / scan specs).</p><span class="flag partial">Raster</span></a>
+    <a class="tile" href="tools/pdf-editor.html"><div class="ic">&#9998;</div><h4>Editor</h4><p>Add text / signature, rotate, delete &amp; reorder pages.</p><span class="flag partial">Basic</span></a>
+    <a class="tile" href="tools/pdf-page-numbers.html"><div class="ic">&#128290;</div><h4>Page Numbers</h4><p>Stamp page numbers &mdash; position, format, start value.</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/pdf-watermark.html"><div class="ic">&#127991;</div><h4>Watermark</h4><p>Text (CONFIDENTIAL) or image watermark; tile or centre.</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/pdf-crop.html"><div class="ic">&#9986;</div><h4>Crop</h4><p>Trim margins off every page, with a live preview.</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/pdf-ocr.html"><div class="ic">&#128269;</div><h4>OCR &rarr; Searchable</h4><p>Make a scanned PDF searchable &amp; selectable (offline).</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/pdf-redact.html"><div class="ic">&#9724;</div><h4>Redact</h4><p>Black out &amp; permanently remove content (rasterised).</p><span class="flag full">Full</span></a>
+  </div>
+
+  <div class="group"><h3>Image tools</h3><div class="rule"></div></div>
+  <div class="tiles">
+    <a class="tile" href="tools/img-compress.html"><div class="ic">&#128449;</div><h4>Compress</h4><p>Reduce JPG / PNG / WebP size with a quality slider.</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/img-resize.html"><div class="ic">&#8690;</div><h4>Resize</h4><p>Change pixel dimensions by size or percentage.</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/img-dpi.html"><div class="ic">&#128207;</div><h4>DPI Converter</h4><p>Set image DPI for print &mdash; metadata or resample.</p><span class="flag full">Full</span></a>
+    <a class="tile" href="tools/img-editor.html"><div class="ic">&#9998;</div><h4>Editor</h4><p>Crop, rotate, adjust brightness &amp; annotate.</p><span class="flag partial">Basic</span></a>
+  </div>
+
+  <footer class="footer">
+    <div><strong>Finotrix Toolkit</strong> &mdash; runs locally in your browser. No uploads, no internet.</div>
+    <div>Confidential-safe for client documents.</div>
+  </footer>
+</div>
+<script src="lib/common.js"></script>
+<script>
+(()=>{
+  const q=document.getElementById('toolSearch'), tiles=[...document.querySelectorAll('.tile')], groups=[...document.querySelectorAll('.group')], rows=[...document.querySelectorAll('.tiles')];
+  function apply(){
+    const s=q.value.trim().toLowerCase(); let shown=0;
+    tiles.forEach(t=>{const on=!s||t.textContent.toLowerCase().includes(s);t.style.display=on?'':'none';if(on)shown++;});
+    // hide a group + its row when it has no visible tiles
+    rows.forEach((row,i)=>{const any=[...row.querySelectorAll('.tile')].some(t=>t.style.display!=='none');row.style.display=any?'':'none';if(groups[i])groups[i].style.display=any?'':'none';});
+    document.getElementById('noResults').style.display=shown?'none':'block';
+  }
+  q.addEventListener('input',apply);
+  q.addEventListener('keydown',e=>{if(e.key==='Escape'){q.value='';apply();}});
+})();
+</script>
+</body>
+</html>

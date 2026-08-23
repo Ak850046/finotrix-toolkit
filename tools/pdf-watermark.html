@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Add Watermark — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>Add Watermark</h1><p class="sub">Stamp text or an image across every page</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="card" style="max-width:680px">
+    <div class="card-title"><h3>Upload PDF</h3><span id="pc" class="badge">—</span></div>
+    <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop a PDF</strong><div class="only">PDF</div></div>
+    <input id="fileInput" type="file" accept=".pdf">
+    <div id="fileList" class="file-list"></div>
+    <div class="options">
+      <label class="opt"><input type="radio" name="kind" value="text" checked><span><strong>Text watermark</strong></span></label>
+      <div class="row" style="margin-left:26px">
+        <div class="field" style="flex:2"><label>Text</label><input id="txt" type="text" value="CONFIDENTIAL"></div>
+        <div class="field"><label>Colour</label><input id="color" type="color" value="#7a2434"></div>
+      </div>
+      <label class="opt"><input type="radio" name="kind" value="image"><span><strong>Image watermark</strong> (PNG/JPG logo)</span></label>
+      <div class="field" style="margin-left:26px"><input id="img" type="file" accept="image/png,image/jpeg" style="display:block"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Opacity: <span id="ov">18%</span></label><input id="op" type="range" min="5" max="80" value="18"></div>
+      <div class="field"><label>Rotation°</label><input id="rot" type="number" value="45" min="-90" max="90"></div>
+      <div class="field"><label>Size</label><input id="size" type="number" value="60" min="8" max="300"></div>
+    </div>
+    <label class="opt"><input id="tile" type="checkbox"><span>Tile across the whole page (repeat)</span></label>
+    <div class="actions"><button id="go" class="btn btn-primary" disabled>Add watermark</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+    <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+    <div id="libraryState" class="library-state">Loading…</div>
+    <div class="note">100% offline.</div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — Add Watermark</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf-lib.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes,hexToRgb}=FTX;let file=null,imgFile=null;
+$('libraryState').innerHTML=`<span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} PDF engine</span>`;
+$('op').oninput=()=>$('ov').textContent=$('op').value+'%';
+$('img').onchange=e=>{imgFile=e.target.files[0]||null;if(imgFile)document.querySelector('input[name=kind][value=image]').checked=true;};
+FTX.wireDrop('dropzone','fileInput',list=>{const f=list[0];if(!f||FTX.extOf(f.name)!=='pdf'){FTX.status('status','Please choose a PDF.','bad');return;}file=f;$('fileList').className='file-list show';$('fileList').innerHTML=`<div class="file-row"><div class="file-kind">PDF</div><div class="file-meta"><strong>${escapeHtml(f.name)}</strong><span>${formatBytes(f.size)}</span></div></div>`;$('go').disabled=false;FTX.hideStatus('status');});
+$('clr').onclick=()=>{file=null;imgFile=null;$('fileList').className='file-list';$('fileList').innerHTML='';$('go').disabled=true;$('pc').textContent='—';FTX.hideStatus('status');FTX.hideProgress('progress');};
+$('go').onclick=async()=>{
+  if(!file)return;$('go').disabled=true;FTX.progress('progress',10);
+  try{
+    const {PDFDocument,rgb,StandardFonts,degrees}=PDFLib;
+    const doc=await PDFDocument.load(new Uint8Array(await file.arrayBuffer()),{ignoreEncryption:true});
+    const pages=doc.getPages();$('pc').textContent=pages.length+' pages';
+    const kind=document.querySelector('input[name=kind]:checked').value;
+    const op=(+$('op').value)/100,rot=+$('rot').value||0,size=+$('size').value||60,tile=$('tile').checked;
+    let font,img,iw,ih;
+    if(kind==='text'){font=await doc.embedFont(StandardFonts.HelveticaBold);}
+    else{if(!imgFile){FTX.status('status','Choose an image for the watermark.','bad');$('go').disabled=false;return;}const b=new Uint8Array(await imgFile.arrayBuffer());img=/png/i.test(imgFile.type)?await doc.embedPng(b):await doc.embedJpg(b);const sc=size/Math.max(img.width,img.height)*4;iw=img.width*sc;ih=img.height*sc;}
+    const c=hexToRgb($('color').value);
+    for(const pg of pages){
+      const {width,height}=pg.getSize();
+      const stamp=(cx,cy)=>{
+        if(kind==='text'){const t=$('txt').value||'';const tw=font.widthOfTextAtSize(t,size);pg.drawText(t,{x:cx-tw/2,y:cy-size/2,size,font,color:rgb(c.r,c.g,c.b),opacity:op,rotate:degrees(rot)});}
+        else{pg.drawImage(img,{x:cx-iw/2,y:cy-ih/2,width:iw,height:ih,opacity:op,rotate:degrees(rot)});}
+      };
+      if(tile){const stepX=width/3,stepY=height/4;for(let gx=0;gx<3;gx++)for(let gy=0;gy<4;gy++)stamp(stepX*(gx+0.5),stepY*(gy+0.5));}
+      else stamp(width/2,height/2);
+    }
+    saveBytes(await doc.save(),stripExt(file.name)+'-watermarked.pdf','application/pdf');
+    FTX.status('status',`Watermarked ${pages.length} pages.`,'good');FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),700);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+})();
+</script>
+</body>
+</html>

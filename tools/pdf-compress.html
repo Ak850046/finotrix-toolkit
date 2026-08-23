@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF Compress — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>Compress PDF</h1><p class="sub">Shrink by rasterising pages</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="card" style="max-width:680px">
+    <div class="card-title"><h3>Upload PDF</h3><span id="pc" class="badge">—</span></div>
+    <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop a PDF</strong><p>Great for scan-heavy PDFs.</p><div class="only">PDF</div></div>
+    <input id="fileInput" type="file" accept=".pdf">
+    <div id="fileList" class="file-list"></div>
+    <div class="row">
+      <div class="field"><label>Target resolution</label><select id="dpi"><option value="96">Small (96 DPI)</option><option value="120" selected>Balanced (120 DPI)</option><option value="150">Good (150 DPI)</option><option value="200">High (200 DPI)</option></select></div>
+      <div class="field"><label>JPEG quality: <span id="qv">70%</span></label><input id="q" type="range" min="40" max="92" value="70"></div>
+    </div>
+    <div class="actions"><button id="go" class="btn btn-primary" disabled>Compress</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+    <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+    <div id="libraryState" class="library-state">Loading…</div>
+    <div class="note"><strong>Note:</strong> pages are re-rendered as images, so text becomes non-selectable. Best for scanned / image-heavy PDFs; text-only PDFs may not shrink. 100% offline.</div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — Compress PDF</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/pdf-lib.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes}=FTX;let file=null;
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+$('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF render</span> &nbsp; <span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} PDF engine</span>`;
+$('q').oninput=()=>$('qv').textContent=$('q').value+'%';
+FTX.wireDrop('dropzone','fileInput',list=>{const f=list[0];if(!f||FTX.extOf(f.name)!=='pdf'){FTX.status('status','Please choose a PDF.','bad');return;}file=f;$('fileList').className='file-list show';$('fileList').innerHTML=`<div class="file-row"><div class="file-kind">PDF</div><div class="file-meta"><strong>${escapeHtml(f.name)}</strong><span>${formatBytes(f.size)}</span></div></div>`;$('go').disabled=false;FTX.hideStatus('status');});
+$('clr').onclick=()=>{file=null;$('fileList').className='file-list';$('fileList').innerHTML='';$('go').disabled=true;$('pc').textContent='—';FTX.hideStatus('status');FTX.hideProgress('progress');};
+$('go').onclick=async()=>{
+  if(!file)return;$('go').disabled=true;FTX.progress('progress',4);
+  try{
+    const dpi=+$('dpi').value,q=(+$('q').value)/100;const scale=dpi/72;
+    const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+    const {PDFDocument}=PDFLib;const out=await PDFDocument.create();
+    for(let p=1;p<=pdf.numPages;p++){
+      FTX.status('status',`Compressing page ${p}/${pdf.numPages}…`,'info');
+      const page=await pdf.getPage(p);const vpPts=page.getViewport({scale:1});const vp=page.getViewport({scale});
+      const cv=document.createElement('canvas');cv.width=Math.ceil(vp.width);cv.height=Math.ceil(vp.height);
+      const ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);
+      await page.render({canvasContext:ctx,viewport:vp}).promise;
+      const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',q));
+      const jpg=await out.embedJpg(new Uint8Array(await blob.arrayBuffer()));
+      const pg=out.addPage([vpPts.width,vpPts.height]);pg.drawImage(jpg,{x:0,y:0,width:vpPts.width,height:vpPts.height});
+      FTX.progress('progress',Math.round(p/pdf.numPages*88)+5);
+    }
+    await pdf.destroy();
+    const bytes=await out.save();
+    const before=file.size,after=bytes.length,pct=Math.round((1-after/before)*100);
+    saveBytes(bytes,stripExt(file.name)+'-compressed.pdf','application/pdf');
+    FTX.status('status',`Done: ${formatBytes(before)} → ${formatBytes(after)} (${pct>0?'-'+pct+'%':'no gain — already small'}).`, pct>0?'good':'info');
+    FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),700);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Crop PDF — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>Crop PDF</h1><p class="sub">Trim margins off every page</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><h3>Upload PDF</h3><span id="pc" class="badge">—</span></div>
+      <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop a PDF</strong><div class="only">PDF</div></div>
+      <input id="fileInput" type="file" accept=".pdf">
+      <div id="fileList" class="file-list"></div>
+      <p class="note" style="margin-bottom:6px">Trim from each edge (as a % of the page). Preview updates on the right.</p>
+      <div class="row">
+        <div class="field"><label>Top %</label><input class="mg" id="mt" type="number" value="0" min="0" max="45"></div>
+        <div class="field"><label>Bottom %</label><input class="mg" id="mb" type="number" value="0" min="0" max="45"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Left %</label><input class="mg" id="ml" type="number" value="0" min="0" max="45"></div>
+        <div class="field"><label>Right %</label><input class="mg" id="mr" type="number" value="0" min="0" max="45"></div>
+      </div>
+      <div class="actions"><button id="go" class="btn btn-primary" disabled>Crop all pages</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+      <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+      <div id="libraryState" class="library-state">Loading…</div>
+    </div>
+    <div class="card"><div class="card-title"><h3>Preview (page 1)</h3></div><div style="overflow:auto"><canvas id="cv" class="work"></canvas></div></div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — Crop PDF</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/pdf-lib.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes}=FTX;let file=null,page1=null;
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+$('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF render</span> &nbsp; <span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} PDF engine</span>`;
+document.querySelectorAll('.mg').forEach(i=>i.oninput=preview);
+FTX.wireDrop('dropzone','fileInput',async list=>{const f=list[0];if(!f||FTX.extOf(f.name)!=='pdf'){FTX.status('status','Please choose a PDF.','bad');return;}file=f;$('fileList').className='file-list show';$('fileList').innerHTML=`<div class="file-row"><div class="file-kind">PDF</div><div class="file-meta"><strong>${escapeHtml(f.name)}</strong><span>${formatBytes(f.size)}</span></div></div>`;$('go').disabled=false;FTX.hideStatus('status');const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await f.arrayBuffer())}).promise;$('pc').textContent=pdf.numPages+' pages';page1=await pdf.getPage(1);preview();});
+$('clr').onclick=()=>{file=null;page1=null;$('fileList').className='file-list';$('fileList').innerHTML='';$('go').disabled=true;$('pc').textContent='—';const cv=$('cv');cv.width=cv.height=0;FTX.hideStatus('status');FTX.hideProgress('progress');};
+async function preview(){
+  if(!page1)return;const cv=$('cv');const vp=page1.getViewport({scale:1});const scale=Math.min(360/vp.width,1.2);const v=page1.getViewport({scale});
+  cv.width=Math.ceil(v.width);cv.height=Math.ceil(v.height);const ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);
+  await page1.render({canvasContext:ctx,viewport:v}).promise;
+  const t=(+$('mt').value||0)/100,b=(+$('mb').value||0)/100,l=(+$('ml').value||0)/100,r=(+$('mr').value||0)/100;
+  ctx.fillStyle='rgba(122,36,52,.28)';
+  ctx.fillRect(0,0,cv.width,cv.height*t);ctx.fillRect(0,cv.height*(1-b),cv.width,cv.height*b);
+  ctx.fillRect(0,0,cv.width*l,cv.height);ctx.fillRect(cv.width*(1-r),0,cv.width*r,cv.height);
+  ctx.strokeStyle='#7a2434';ctx.lineWidth=2;ctx.strokeRect(cv.width*l,cv.height*t,cv.width*(1-l-r),cv.height*(1-t-b));
+}
+$('go').onclick=async()=>{
+  if(!file)return;$('go').disabled=true;FTX.progress('progress',10);
+  try{
+    const t=(+$('mt').value||0)/100,b=(+$('mb').value||0)/100,l=(+$('ml').value||0)/100,r=(+$('mr').value||0)/100;
+    if(l+r>=0.9||t+b>=0.9){FTX.status('status','Margins too large.','bad');$('go').disabled=false;return;}
+    const {PDFDocument}=PDFLib;const doc=await PDFDocument.load(new Uint8Array(await file.arrayBuffer()),{ignoreEncryption:true});
+    for(const pg of doc.getPages()){
+      const {x,y,width,height}=pg.getMediaBox();
+      const nx=x+width*l, ny=y+height*b, nw=width*(1-l-r), nh=height*(1-t-b);
+      pg.setCropBox(nx,ny,nw,nh);
+    }
+    saveBytes(await doc.save(),stripExt(file.name)+'-cropped.pdf','application/pdf');
+    FTX.status('status','Cropped all pages.','good');FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),700);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+})();
+</script>
+</body>
+</html>

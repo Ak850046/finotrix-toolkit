@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF → Word — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>PDF &rarr; Word</h1><p class="sub">Editable reconstruction, or visual-exact pages</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="card" style="max-width:720px">
+    <div class="card-title"><h3>Upload PDF</h3><span class="badge">PDF</span></div>
+    <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop a PDF</strong><p>Choose a conversion mode below.</p><div class="only">PDF</div></div>
+    <input id="fileInput" type="file" accept=".pdf">
+    <div id="fileList" class="file-list"></div>
+
+    <div class="options">
+      <label class="opt"><input type="radio" name="mode" value="editable" checked><span><strong>Editable &mdash; reconstruct layout</strong><br>Rebuilds real Word <em>tables</em>, headings and paragraphs from the page. Fully editable in Word. Best for text/table documents; not pixel-perfect (no colours, logos or exact borders).</span></label>
+      <label class="opt"><input type="radio" name="mode" value="visual"><span><strong>Visual-exact &mdash; page images</strong><br>Each page placed as a high-resolution image inside the Word file. Looks <em>identical</em> to the PDF (colours, logos, layout), but the text is a picture and can&rsquo;t be edited.</span></label>
+    </div>
+    <div class="row" id="editOpts">
+      <div class="field"><label>Detect headings</label><select id="headings"><option value="1" selected>Yes (by font size)</option><option value="0">No</option></select></div>
+      <div class="field"><label>OCR scanned pages</label><select id="ocr"><option value="1" selected>Yes (offline)</option><option value="0">No</option></select></div>
+    </div>
+    <div class="row" id="visOpts" style="display:none">
+      <div class="field"><label>Image resolution</label><select id="vdpi"><option value="150">150 DPI</option><option value="200" selected>200 DPI</option><option value="300">300 DPI (large)</option></select></div>
+    </div>
+
+    <div class="actions"><button id="go" class="btn btn-primary" disabled>Convert to Word</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+    <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+    <div id="libraryState" class="library-state">Loading…</div>
+    <div class="note">Fully offline. Reconstruction quality depends on the source layout; complex multi-column pages may need a tidy in Word.</div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — PDF → Word</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/tesseract.min.js"></script>
+<script src="../lib/docx.umd.js"></script>
+<script src="../lib/common.js"></script>
+<script src="../lib/pdftext.js"></script>
+<script>
+(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBlob}=FTX;let file=null;
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+$('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF</span> &nbsp; <span class="${window.docx?'ok':'bad'}">${window.docx?'✓':'✕'} Word</span> &nbsp; <span class="${window.Tesseract?'ok':'bad'}">${window.Tesseract?'✓':'✕'} OCR</span>`;
+document.querySelectorAll('input[name=mode]').forEach(r=>r.onchange=()=>{const v=document.querySelector('input[name=mode]:checked').value;$('editOpts').style.display=v==='editable'?'':'none';$('visOpts').style.display=v==='visual'?'':'none';});
+FTX.wireDrop('dropzone','fileInput',list=>{const f=list[0];if(!f||FTX.extOf(f.name)!=='pdf'){FTX.status('status','Please choose a PDF.','bad');return;}file=f;$('fileList').className='file-list show';$('fileList').innerHTML=`<div class="file-row"><div class="file-kind">PDF</div><div class="file-meta"><strong>${escapeHtml(f.name)}</strong><span>${formatBytes(f.size)}</span></div></div>`;$('go').disabled=false;FTX.hideStatus('status');});
+$('clr').onclick=()=>{file=null;$('fileList').className='file-list';$('fileList').innerHTML='';$('go').disabled=true;FTX.hideStatus('status');FTX.hideProgress('progress');};
+
+$('go').onclick=async()=>{
+  if(!file)return;$('go').disabled=true;FTX.progress('progress',5);
+  const mode=document.querySelector('input[name=mode]:checked').value;
+  try{
+    const blob = mode==='visual' ? await buildVisual(file) : await buildEditable(file);
+    saveBlob(blob,stripExt(file.name)+'.docx');
+    FTX.status('status','Word document created.','good');FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),700);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+
+// ---------- EDITABLE: reconstruct tables / headings / paragraphs ----------
+async function buildEditable(file){
+  const {Document,Packer,Paragraph,TextRun,HeadingLevel,Table,TableRow,TableCell,WidthType,PageBreak}=docx;
+  const pages=await FTXPDF.extract(file,{ocr:$('ocr').value==='1',onStatus:m=>FTX.status('status',m,'info'),onProgress:p=>FTX.progress('progress',Math.min(70,p))});
+  const body=FTXPDF.medianSize(pages);const detectH=$('headings').value==='1';
+  const children=[];
+  for(let pi=0;pi<pages.length;pi++){
+    const lines=pages[pi].lines;
+    for(let i=0;i<lines.length;i++){
+      const l=lines[i],t=(l.text||'').trim();if(!t)continue;
+      // table block: contiguous rows with >=2 aligned cells
+      if(l.cells&&l.cells.length>=2){
+        const block=[];let j=i;
+        while(j<lines.length&&lines[j].cells&&lines[j].cells.length>=2&&lines[j].cells.length<=12){block.push(lines[j].cells);j++;}
+        if(block.length>=2){children.push(buildTable(block,{Paragraph,TextRun,Table,TableRow,TableCell,WidthType}));i=j-1;continue;}
+      }
+      const lvl=detectH?FTXPDF.headingLevel(l,body):0;
+      if(lvl){children.push(new Paragraph({text:t.replace(/[:\-–—]+$/,'').trim(),heading:lvl===1?HeadingLevel.HEADING_1:lvl===2?HeadingLevel.HEADING_2:HeadingLevel.HEADING_3}));}
+      else children.push(new Paragraph({children:[new TextRun(t)]}));
+    }
+    if(pi<pages.length-1)children.push(new Paragraph({children:[new PageBreak()]}));
+    FTX.progress('progress',70+Math.round((pi+1)/pages.length*25));
+  }
+  const doc=new Document({sections:[{children}]});
+  return await Packer.toBlob(doc);
+}
+function buildTable(rows,C){
+  const cols=Math.max(...rows.map(r=>r.length));
+  const trows=rows.map(r=>{
+    const cells=[];
+    for(let c=0;c<cols;c++){cells.push(new C.TableCell({children:[new C.Paragraph({children:[new C.TextRun(String(r[c]==null?'':r[c]))]})]}));}
+    return new C.TableRow({children:cells});
+  });
+  return new C.Table({rows:trows,width:{size:100,type:C.WidthType.PERCENTAGE}});
+}
+
+// ---------- VISUAL-EXACT: each page as a full-page image ----------
+async function buildVisual(file){
+  const {Document,Packer,Paragraph,ImageRun}=docx;
+  const dpi=+$('vdpi').value,scale=dpi/72;
+  const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+  const sections=[];
+  for(let p=1;p<=pdf.numPages;p++){
+    FTX.status('status',`Rendering page ${p}/${pdf.numPages}…`,'info');
+    const page=await pdf.getPage(p);
+    const pts=page.getViewport({scale:1});const vp=page.getViewport({scale});
+    const cv=document.createElement('canvas');cv.width=Math.ceil(vp.width);cv.height=Math.ceil(vp.height);
+    const ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);
+    await page.render({canvasContext:ctx,viewport:vp}).promise;
+    const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',0.9));
+    const bytes=new Uint8Array(await blob.arrayBuffer());
+    // page size in twips (pt*20); image display size in px at 96dpi = pt*96/72
+    const wTw=Math.round(pts.width*20),hTw=Math.round(pts.height*20);
+    const wPx=Math.round(pts.width*96/72),hPx=Math.round(pts.height*96/72);
+    sections.push({
+      properties:{page:{size:{width:wTw,height:hTw},margin:{top:0,right:0,bottom:0,left:0}}},
+      children:[new Paragraph({children:[new ImageRun({data:bytes,transformation:{width:wPx,height:hPx}})]})]
+    });
+    FTX.progress('progress',5+Math.round(p/pdf.numPages*90));
+  }
+  await pdf.destroy();
+  const doc=new Document({sections});
+  return await Packer.toBlob(doc);
+}
+})();
+</script>
+</body>
+</html>

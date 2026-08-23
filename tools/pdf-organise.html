@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Merge & Organise — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>Merge &amp; Organise</h1><p class="sub">Combine files, reorder, rotate &amp; delete pages</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="card">
+    <div class="card-title"><h3>Add PDFs</h3><span id="pc" class="badge">0 pages</span></div>
+    <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop one or more PDFs</strong><p>Pages appear below — drag to reorder, rotate or delete, then export.</p><div class="only">PDF</div></div>
+    <input id="fileInput" type="file" accept=".pdf" multiple>
+    <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+    <div id="libraryState" class="library-state">Loading…</div>
+    <div id="thumbs" class="thumbs"></div>
+    <div class="actions"><button id="go" class="btn btn-primary" disabled>Export PDF</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+    <div class="note">Drag a page onto another to reorder. 100% offline.</div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — Merge &amp; Organise</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/pdf-lib.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,stripExt,saveBytes}=FTX;
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+$('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF render</span> &nbsp; <span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} PDF engine</span>`;
+const docs=[]; // {name,bytes}
+let pages=[]; // {docI,pageI,rot}
+FTX.wireDrop('dropzone','fileInput',handle);
+$('clr').onclick=()=>{docs.length=0;pages=[];render();FTX.hideStatus('status');};
+async function handle(list){
+  for(const f of Array.from(list)){
+    if(FTX.extOf(f.name)!=='pdf')continue;
+    const bytes=new Uint8Array(await f.arrayBuffer());const docI=docs.length;docs.push({name:f.name,bytes});
+    const pdf=await pdfjsLib.getDocument({data:bytes.slice()}).promise;
+    for(let p=0;p<pdf.numPages;p++)pages.push({docI,pageI:p,rot:0});
+    docs[docI].pdf=pdf;
+  }
+  render();
+}
+async function render(){
+  $('pc').textContent=pages.length+' pages';$('go').disabled=!pages.length;
+  const box=$('thumbs');box.innerHTML='';
+  for(let i=0;i<pages.length;i++){
+    const pg=pages[i];const t=document.createElement('div');t.className='thumb';t.draggable=true;t.dataset.i=i;
+    t.innerHTML=`<div class="tnum">${i+1}</div>`;
+    const cv=document.createElement('canvas');t.appendChild(cv);
+    const tools=document.createElement('div');tools.className='tools';
+    tools.innerHTML=`<button title="Rotate left">⟲</button><button title="Rotate right">⟳</button><button title="Delete">✕</button>`;
+    tools.children[0].onclick=e=>{e.stopPropagation();pg.rot=(pg.rot+270)%360;render();};
+    tools.children[1].onclick=e=>{e.stopPropagation();pg.rot=(pg.rot+90)%360;render();};
+    tools.children[2].onclick=e=>{e.stopPropagation();pages.splice(i,1);render();};
+    t.appendChild(tools);box.appendChild(t);
+    // render thumbnail
+    try{const page=await docs[pg.docI].pdf.getPage(pg.pageI+1);const vp=page.getViewport({scale:0.28,rotation:pg.rot});cv.width=Math.ceil(vp.width);cv.height=Math.ceil(vp.height);const ctx=cv.getContext('2d');ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);await page.render({canvasContext:ctx,viewport:vp}).promise;}catch(e){}
+    // drag reorder
+    t.addEventListener('dragstart',e=>{e.dataTransfer.setData('i',i);});
+    t.addEventListener('dragover',e=>e.preventDefault());
+    t.addEventListener('drop',e=>{e.preventDefault();const from=+e.dataTransfer.getData('i');const to=i;if(from===to)return;const m=pages.splice(from,1)[0];pages.splice(to,0,m);render();});
+  }
+}
+$('go').onclick=async()=>{
+  if(!pages.length)return;$('go').disabled=true;FTX.progress('progress',5);
+  try{
+    const {PDFDocument,degrees}=PDFLib;const out=await PDFDocument.create();
+    const libDocs={};
+    for(let i=0;i<pages.length;i++){
+      const pg=pages[i];FTX.status('status',`Assembling page ${i+1}/${pages.length}…`,'info');
+      if(!libDocs[pg.docI])libDocs[pg.docI]=await PDFDocument.load(docs[pg.docI].bytes,{ignoreEncryption:true});
+      const [cp]=await out.copyPages(libDocs[pg.docI],[pg.pageI]);
+      if(pg.rot){const cur=cp.getRotation().angle||0;cp.setRotation(degrees((cur+pg.rot)%360));}
+      out.addPage(cp);
+      FTX.progress('progress',Math.round((i+1)/pages.length*88)+5);
+    }
+    saveBytes(await out.save(),'finotrix-organised.pdf','application/pdf');
+    FTX.status('status','Exported PDF.','good');FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),700);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+})();
+</script>
+</body>
+</html>

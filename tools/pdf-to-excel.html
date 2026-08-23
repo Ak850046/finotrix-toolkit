@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF → Excel — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+<style>
+  .pwField{flex:0 0 190px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
+  .lock{color:var(--warn);font-weight:600;margin-left:6px}
+  #pwPanel{border:1px solid var(--warn);background:var(--warn-wash);border-radius:var(--radius);padding:14px;margin:14px 0}
+  #pwPanel .card-title h3{color:var(--warn)}
+</style>
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>PDF &rarr; Excel</h1><p class="sub">Batch + HDFC mode + password-protected PDFs</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="card" style="max-width:720px">
+    <div class="card-title"><h3>Upload PDF(s)</h3><span class="badge">PDF</span></div>
+    <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop one or more PDFs</strong><p>Add several statements at once. Locked PDFs are accepted &mdash; you&rsquo;ll be asked for the password.</p><div class="only">PDF</div></div>
+    <input id="fileInput" type="file" accept=".pdf" multiple>
+    <div id="fileList" class="file-list"></div>
+
+    <div id="pwPanel" style="display:none">
+      <div class="card-title"><h3>&#128274; Password-protected PDF(s)</h3><span class="badge" id="pwCount"></span></div>
+      <div class="field"><label>Password</label><input id="pwAll" type="password" placeholder="Enter the PDF password"></div>
+      <label class="opt"><input id="pwSame" type="checkbox" checked><span><strong>Same password for all</strong><br>Untick to enter a different password for each locked file below.</span></label>
+      <div id="pwList" style="display:none;flex-direction:column;gap:8px;margin-top:10px"></div>
+    </div>
+
+    <div class="field">
+      <label>Conversion mode</label>
+      <select id="mode">
+        <option value="tables" selected>Auto &mdash; one sheet per detected table</option>
+        <option value="all">Auto &mdash; all rows on one sheet</option>
+        <option value="hdfc">HDFC bank statement &rarr; clean columns</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Output</label>
+      <select id="output">
+        <option value="merge" selected>Single Excel &mdash; one sheet per PDF</option>
+        <option value="separate">Separate Excel per PDF (.zip when more than one)</option>
+      </select>
+    </div>
+    <div class="options" id="hdfcNote" style="display:none">
+      <div class="note"><strong>HDFC statement mode:</strong> detects the statement headers and rebuilds clean columns &mdash; multi-line narration merged, amounts as numbers, running-balance tie check. Text HDFC e-statements only (not scanned images).</div>
+    </div>
+    <label class="opt"><input id="ocr" type="checkbox"><span><strong>OCR</strong> for scanned pages (offline) &mdash; auto/table modes only</span></label>
+    <div class="actions"><button id="go" class="btn btn-primary" disabled>Convert</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+    <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+    <div id="libraryState" class="library-state">Loading…</div>
+    <div class="note">100% offline. Passwords never leave your browser.</div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — PDF → Excel</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/tesseract.min.js"></script>
+<script src="../lib/xlsx.full.min.js"></script>
+<script src="../lib/jszip.min.js"></script>
+<script src="../lib/common.js"></script>
+<script src="../lib/pdftext.js"></script>
+<script>
+(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes,saveBlob}=FTX;let files=[]; // [{file,locked,pw}]
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+$('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF</span> &nbsp; <span class="${window.XLSX?'ok':'bad'}">${window.XLSX?'✓':'✕'} Excel</span> &nbsp; <span class="${window.JSZip?'ok':'bad'}">${window.JSZip?'✓':'✕'} ZIP</span> &nbsp; <span class="${window.Tesseract?'ok':'bad'}">${window.Tesseract?'✓':'✕'} OCR</span>`;
+$('mode').onchange=()=>{$('hdfcNote').style.display=$('mode').value==='hdfc'?'':'none';};
+$('pwSame').onchange=()=>{$('pwList').style.display=$('pwSame').checked?'none':'flex';};
+
+FTX.wireDrop('dropzone','fileInput',async list=>{
+  for(const f of Array.from(list))if(FTX.extOf(f.name)==='pdf'&&!files.some(x=>x.file.name===f.name&&x.file.size===f.size))files.push({file:f,locked:undefined,pw:''});
+  render();FTX.hideStatus('status');await refreshLocks();
+});
+$('clr').onclick=()=>{files=[];render();$('pwPanel').style.display='none';FTX.hideStatus('status');FTX.hideProgress('progress');};
+
+async function isLocked(file){
+  try{const task=pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())});const pdf=await task.promise;await pdf.destroy();return false;}
+  catch(e){return !!(e&&(e.name==='PasswordException'||e.code===1||e.code===2))||/password/i.test(e&&e.message||'');}
+}
+async function refreshLocks(){
+  for(const it of files){ if(it.locked===undefined){FTX.status('status',`Checking ${it.file.name}…`,'info');it.locked=await isLocked(it.file);} }
+  FTX.hideStatus('status');
+  const locked=files.filter(f=>f.locked);
+  $('pwPanel').style.display=locked.length?'':'none';
+  $('pwCount').textContent=locked.length+' file(s)';
+  $('pwList').style.display=$('pwSame').checked?'none':'flex';
+  renderPwList(locked);
+  render();
+}
+function renderPwList(locked){
+  $('pwList').innerHTML=locked.map((it)=>{const gi=files.indexOf(it);return `<div class="file-row"><div class="file-kind">${gi+1}</div><div class="file-meta"><strong>${escapeHtml(it.file.name)}</strong></div><input type="password" class="pwField" data-i="${gi}" placeholder="password" value="${it.pw?escapeHtml(it.pw):''}"></div>`;}).join('');
+  $('pwList').querySelectorAll('.pwField').forEach(inp=>inp.oninput=e=>{files[+e.target.dataset.i].pw=e.target.value;});
+}
+function render(){
+  $('go').disabled=!files.length;const box=$('fileList');
+  if(!files.length){box.className='file-list';box.innerHTML='';return;}
+  box.className='file-list show';
+  box.innerHTML=files.map((it,i)=>`<div class="file-row"><div class="file-kind">PDF</div><div class="file-meta"><strong>${escapeHtml(it.file.name)}${it.locked?'<span class="lock">&#128274; locked</span>':''}</strong><span>${formatBytes(it.file.size)}</span></div><button class="file-remove" data-i="${i}">✕</button></div>`).join('');
+  box.querySelectorAll('.file-remove').forEach(b=>b.onclick=e=>{files.splice(+e.target.dataset.i,1);render();refreshLocks();});
+}
+function pwFor(it){ if(!it.locked) return undefined; return $('pwSame').checked ? ($('pwAll').value||'') : (it.pw||''); }
+function pad(rows){const cols=Math.max(1,...rows.map(r=>r.length));return rows.map(r=>Array.from({length:cols},(_,i)=>r[i]==null?'':r[i]));}
+
+async function sheetsForFile(f,mode,onStatus,password){
+  if(mode==='hdfc'){const {rows,count,warn}=await parseHDFC(f,onStatus,password);return {sheets:[{name:stripExt(f.name),aoa:rows}],note:`${f.name}: ${count} txns`+(warn?' '+warn:'')};}
+  const pages=await FTXPDF.extract(f,{ocr:$('ocr').checked,password,onStatus,onProgress:()=>{}});
+  if(mode==='all'){const rows=[];pages.forEach(pg=>pg.lines.forEach(l=>rows.push(l.cells&&l.cells.length?l.cells:[l.text])));return {sheets:[{name:stripExt(f.name),aoa:pad(rows)}],note:`${f.name}: exported`};}
+  const blocks=FTXPDF.tableBlocks(pages);
+  if(!blocks.length){const rows=[];pages.forEach(pg=>pg.lines.forEach(l=>rows.push([l.text])));return {sheets:[{name:stripExt(f.name),aoa:pad(rows)}],note:`${f.name}: no tables`};}
+  return {sheets:blocks.map((b,i)=>({name:stripExt(f.name)+(blocks.length>1?` T${i+1}`:''),aoa:pad(b.rows)})),note:`${f.name}: ${blocks.length} table(s)`};
+}
+function safeName(used,base){let n=String(base||'Sheet').replace(/[\\\/?*\[\]:]/g,'-').slice(0,31)||'Sheet';let x=n,k=2;while(used.has(x.toLowerCase())){const suf=` (${k++})`;x=n.slice(0,31-suf.length)+suf;}used.add(x.toLowerCase());return x;}
+function applyHdfcCols(ws){ws['!cols']=[{wch:11},{wch:52},{wch:16},{wch:11},{wch:14},{wch:14},{wch:16}];}
+function wbToBytes(wb){return new Uint8Array(XLSX.write(wb,{type:'array',bookType:'xlsx'}));}
+
+$('go').onclick=async()=>{
+  if(!files.length)return;
+  // guard: any locked file without a password?
+  const missing=files.filter(it=>it.locked && !pwFor(it));
+  if(missing.length){FTX.status('status',`Enter the password for ${missing.length} locked file(s) first.`,'bad');return;}
+  $('go').disabled=true;FTX.progress('progress',3);
+  const mode=$('mode').value,output=$('output').value;
+  try{
+    const notes=[]; let ok=0;
+    const build=async(wb,it,idx)=>{
+      const used=new Set();
+      try{
+        const {sheets,note}=await sheetsForFile(it.file,mode,m=>FTX.status('status',`(${idx+1}/${files.length}) ${it.file.name} — ${m}`,'info'),pwFor(it));
+        for(const s of sheets){const ws=XLSX.utils.aoa_to_sheet(s.aoa);if(mode==='hdfc')applyHdfcCols(ws);XLSX.utils.book_append_sheet(wb,ws,safeName(used,s.name));}
+        notes.push(note); ok++; return true;
+      }catch(e){const wrong=/password/i.test(e.message||'');notes.push(`${it.file.name}: ${wrong?'wrong/missing password — skipped':'failed ('+(e.message||'')+')'}`);return false;}
+    };
+    if(output==='merge'){
+      const wb=XLSX.utils.book_new();
+      for(let i=0;i<files.length;i++){await build(wb,files[i],i);FTX.progress('progress',Math.round((i+1)/files.length*90)+5);}
+      if(!ok)throw new Error(notes.join('  ·  '));
+      const name=files.length===1?stripExt(files[0].file.name)+'.xlsx':'finotrix-statements.xlsx';
+      saveBytes(wbToBytes(wb),name,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    }else{
+      const outputs=[];
+      for(let i=0;i<files.length;i++){const wb=XLSX.utils.book_new();const good=await build(wb,files[i],i);if(good)outputs.push({name:stripExt(files[i].file.name)+'.xlsx',bytes:wbToBytes(wb)});FTX.progress('progress',Math.round((i+1)/files.length*90)+5);}
+      if(!outputs.length)throw new Error(notes.join('  ·  '));
+      if(outputs.length===1)saveBytes(outputs[0].bytes,outputs[0].name,'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      else{const zip=new JSZip();outputs.forEach(o=>zip.file(o.name,o.bytes));saveBlob(await zip.generateAsync({type:'blob'}),'finotrix-statements.zip');}
+    }
+    FTX.status('status',`Done — ${ok}/${files.length} converted. `+notes.slice(0,3).join('  ·  ')+(notes.length>3?' …':''), ok===files.length?'good':'info');
+    FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),800);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+
+// ================= HDFC bank-statement parser =================
+const DATE=/^\d{2}\/\d{2}\/\d{2,4}$/;
+const numOf=s=>{const t=String(s).replace(/,/g,'').replace(/[^0-9.\-]/g,'');return t&&/\d/.test(t)?parseFloat(t):null;};
+const isHeaderRow=j=>/Narration/i.test(j)&&/Withdrawal/i.test(j)&&/Deposit/i.test(j)&&/Closing/i.test(j);
+const SKIP=/Page\s*No|STATEMENT\s+SUMMARY|Opening\s+Balance|Closing\s+Bal|Dr\s+Count|Cr\s+Count|Generated\s+(On|By)|computer\s+generated|Registered\s+Office|Account\s+Branch|Account\s+No|A\/C\s+Open|Statement\s+From|IFSC|MICR|Cust\s+ID|Nomination|Branch\s+Code|Account\s+(Status|Type)|Currency|Phone\s+no|OD\s+Limit|RTGS\/NEFT|JOINT\s+HOLDERS|Contents\s+of\s+this|HDFC\s+BANK\s+LIMITED|GSTIN|hdfcbank\.com|https?:\/\/|goods-and-service|this\s+statement|The\s+address|Statement\s+of\s+account|Requesting|Sanctioned/i;
+
+async function parseHDFC(file,onStatus,password){
+  const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer()),password}).promise;
+  let colx=null,nonDate=null; const txns=[]; let cur=null; let warn='';
+  for(let p=1;p<=pdf.numPages;p++){
+    if(onStatus&&(p===1||p%10===0||p===pdf.numPages))onStatus(`page ${p}/${pdf.numPages}…`);
+    const tc=await (await pdf.getPage(p)).getTextContent();
+    const items=(tc.items||[]).filter(i=>i.str&&i.str.trim()).map(i=>({t:i.str.trim(),x:+(i.transform?.[4]||0),y:+(i.transform?.[5]||0)}));
+    const rows=[]; const tol=4;
+    for(const it of items){let r=rows.find(r=>Math.abs(r.y-it.y)<=tol);if(!r){r={y:it.y,items:[]};rows.push(r);}r.items.push(it);}
+    rows.sort((a,b)=>b.y-a.y); rows.forEach(r=>r.items.sort((a,b)=>a.x-b.x));
+    for(const row of rows){
+      const joined=row.items.map(i=>i.t).join(' ');
+      if(isHeaderRow(joined)){ if(!colx){colx=headerCols(row.items);nonDate=['narration','ref','value','withdrawal','deposit','closing'].filter(k=>colx[k]!=null).map(k=>({key:k,x:colx[k]})).sort((a,b)=>a.x-b.x);} continue; }
+      if(!colx) continue;
+      if(SKIP.test(joined)) continue;
+      const first=row.items[0];
+      const isNew = first && DATE.test(first.t) && first.x < colx.narration-15;
+      if(!isNew && !cur) continue;
+      const bucket={narration:[],ref:[],value:[],withdrawal:[],deposit:[],closing:[]};
+      for(let k=(isNew?1:0);k<row.items.length;k++){const it=row.items[k];bucket[colFor2(it.x,nonDate)].push(it.t);}
+      if(isNew){
+        if(cur)txns.push(cur);
+        cur={date:first.t,narr:bucket.narration.join(' ').trim(),ref:bucket.ref.join(' ').trim(),vdate:bucket.value.join(' ').trim(),wd:bucket.withdrawal.join(' ').trim(),dep:bucket.deposit.join(' ').trim(),bal:bucket.closing.join(' ').trim()};
+      }else{
+        const nn=bucket.narration.join(' ').trim(); if(nn)cur.narr=(cur.narr+' '+nn).trim();
+        const rr=bucket.ref.join(' ').trim(); if(rr&&!cur.ref)cur.ref=rr;
+        const vv=bucket.value.join(' ').trim(); if(vv&&!cur.vdate)cur.vdate=vv;
+        const ww=bucket.withdrawal.join(' ').trim(); if(ww&&!cur.wd)cur.wd=ww;
+        const dd=bucket.deposit.join(' ').trim(); if(dd&&!cur.dep)cur.dep=dd;
+        const bb=bucket.closing.join(' ').trim(); if(bb&&!cur.bal)cur.bal=bb;
+      }
+    }
+  }
+  if(cur)txns.push(cur);
+  await pdf.destroy();
+  if(!colx) throw new Error(`Could not find HDFC columns in "${file.name}". Is it a text HDFC e-statement (not a scan)?`);
+  const head=['Date','Narration','Chq./Ref.No.','Value Date','Withdrawal','Deposit','Closing Balance'];
+  const out=[head];
+  for(const t of txns) out.push([t.date,t.narr,t.ref,t.vdate,numOf(t.wd),numOf(t.dep),numOf(t.bal)]);
+  let mism=0;
+  for(let i=2;i<out.length;i++){const prev=out[i-1][6],c2=out[i][6],w=out[i][4]||0,d=out[i][5]||0;if(typeof prev==='number'&&typeof c2==='number'&&Math.abs(prev-(w||0)+(d||0)-c2)>1)mism++;}
+  if(mism>0)warn=`(${mism} balance mismatch)`;
+  return {rows:out,count:txns.length,warn};
+}
+function headerCols(items){
+  const find=re=>{const it=items.find(i=>re.test(i.t));return it?it.x:null;};
+  return {date:find(/^Date/i),narration:find(/Narration/i),ref:find(/Chq|Ref/i),value:find(/Value/i),withdrawal:find(/Withdrawal/i),deposit:find(/Deposit/i),closing:find(/Closing/i)};
+}
+function colFor2(x,cols){ let best=cols[0].key; for(const c of cols){ if(x>=c.x-6) best=c.key; else break; } return best; }
+})();
+</script>
+</body>
+</html>

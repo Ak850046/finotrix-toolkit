@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OCR PDF — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>OCR PDF &rarr; Searchable</h1><p class="sub">Make a scanned PDF searchable &amp; selectable</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="card" style="max-width:680px">
+    <div class="card-title"><h3>Upload PDF</h3><span id="pc" class="badge">—</span></div>
+    <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop a scanned PDF</strong><p>Each page is read with the bundled offline OCR engine.</p><div class="only">PDF</div></div>
+    <input id="fileInput" type="file" accept=".pdf">
+    <div id="fileList" class="file-list"></div>
+    <div class="row">
+      <div class="field"><label>Render resolution</label><select id="dpi"><option value="150">150 DPI (fast)</option><option value="200" selected>200 DPI</option><option value="300">300 DPI (best)</option></select></div>
+      <div class="field"><label>JPEG quality: <span id="qv">85%</span></label><input id="q" type="range" min="60" max="95" value="85"></div>
+    </div>
+    <div class="actions"><button id="go" class="btn btn-primary" disabled>Make searchable</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+    <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+    <div id="libraryState" class="library-state">Loading…</div>
+    <div class="note"><strong>How it works:</strong> each page is rendered, read by OCR, and rebuilt as the page image plus an invisible text layer &mdash; so you can search and copy the text. Best for clean scans; handwriting won&rsquo;t OCR well. 100% offline (English).</div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — OCR PDF</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/pdf-lib.min.js"></script>
+<script src="../lib/tesseract.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes}=FTX;let file=null;
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+$('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF render</span> &nbsp; <span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} PDF engine</span> &nbsp; <span class="${window.Tesseract?'ok':'bad'}">${window.Tesseract?'✓':'✕'} OCR</span>`;
+$('q').oninput=()=>$('qv').textContent=$('q').value+'%';
+FTX.wireDrop('dropzone','fileInput',list=>{const f=list[0];if(!f||FTX.extOf(f.name)!=='pdf'){FTX.status('status','Please choose a PDF.','bad');return;}file=f;$('fileList').className='file-list show';$('fileList').innerHTML=`<div class="file-row"><div class="file-kind">PDF</div><div class="file-meta"><strong>${escapeHtml(f.name)}</strong><span>${formatBytes(f.size)}</span></div></div>`;$('go').disabled=false;FTX.hideStatus('status');});
+$('clr').onclick=()=>{file=null;$('fileList').className='file-list';$('fileList').innerHTML='';$('go').disabled=true;$('pc').textContent='—';FTX.hideStatus('status');FTX.hideProgress('progress');};
+const ascii=s=>String(s).replace(/[^\x20-\x7E]/g,'').trim();
+function parseTsv(tsv){
+  const out=[];for(const line of String(tsv||'').split(/\r?\n/)){const c=line.split('\t');if(c.length<12)continue;if(c[0]!=='5')continue;const conf=+c[10];const text=ascii(c[11]);if(!text||conf<40)continue;out.push({left:+c[6],top:+c[7],w:+c[8],h:+c[9],text});}
+  return out;
+}
+$('go').onclick=async()=>{
+  if(!file)return;$('go').disabled=true;FTX.progress('progress',3);
+  try{
+    const dpi=+$('dpi').value,q=(+$('q').value)/100,scale=dpi/72;
+    const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;$('pc').textContent=pdf.numPages+' pages';
+    const {PDFDocument,StandardFonts,rgb}=PDFLib;const out=await PDFDocument.create();const font=await out.embedFont(StandardFonts.Helvetica);
+    const worker=await FTX.getOcrWorker();
+    let words=0;
+    for(let p=1;p<=pdf.numPages;p++){
+      FTX.status('status',`OCR page ${p}/${pdf.numPages}…`,'info');
+      const page=await pdf.getPage(p);const pts=page.getViewport({scale:1});const vp=page.getViewport({scale});
+      const cv=document.createElement('canvas');cv.width=Math.ceil(vp.width);cv.height=Math.ceil(vp.height);
+      const ctx=cv.getContext('2d',{willReadFrequently:true});ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);
+      await page.render({canvasContext:ctx,viewport:vp}).promise;
+      const res=await worker.recognize(cv,{},{tsv:true});
+      const ws=parseTsv(res.data&&res.data.tsv);words+=ws.length;
+      const blob=await new Promise(r=>cv.toBlob(r,'image/jpeg',q));
+      const jpg=await out.embedJpg(new Uint8Array(await blob.arrayBuffer()));
+      const pg=out.addPage([pts.width,pts.height]);
+      pg.drawImage(jpg,{x:0,y:0,width:pts.width,height:pts.height});
+      for(const w of ws){
+        const x=w.left/scale, y=pts.height-(w.top+w.h)/scale, size=Math.max(4,w.h/scale*0.86);
+        try{pg.drawText(w.text,{x,y,size,font,color:rgb(0,0,0),opacity:0});}catch(_){}
+      }
+      FTX.progress('progress',5+Math.round(p/pdf.numPages*90));
+    }
+    await pdf.destroy();
+    saveBytes(await out.save(),stripExt(file.name)+'-searchable.pdf','application/pdf');
+    FTX.status('status',`Done — searchable PDF with ${words} words recognised.`,'good');FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),800);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+})();
+</script>
+</body>
+</html>

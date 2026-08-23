@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PDF Editor — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>PDF Editor</h1><p class="sub">Text &amp; signature stamps · rotate · delete · reorder</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><h3>Pages</h3><span id="pc" class="badge">—</span></div>
+      <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop a PDF</strong><p>Click a page to open it for stamping.</p><div class="only">PDF</div></div>
+      <input id="fileInput" type="file" accept=".pdf">
+      <div id="thumbs" class="thumbs"></div>
+      <div class="actions"><button id="go" class="btn btn-primary" disabled>Export PDF</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+      <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+      <div id="libraryState" class="library-state">Loading…</div>
+    </div>
+    <div class="card">
+      <div class="card-title"><h3>Edit page <span id="curp">—</span></h3></div>
+      <div class="row">
+        <div class="field" style="flex:2"><label>Text stamp</label><input id="txt" type="text" placeholder="Type, then click on the page"></div>
+        <div class="field"><label>Size</label><input id="tsize" type="number" value="18" min="6"></div>
+        <div class="field"><label>Colour</label><input id="tcolor" type="color" value="#7a2434"></div>
+      </div>
+      <div class="field"><label>Signature / image stamp (PNG/JPG) — then click on the page</label><input id="sig" type="file" accept="image/png,image/jpeg" style="display:block"></div>
+      <div class="actions"><button id="undo" class="btn btn-secondary">Undo last stamp</button></div>
+      <div style="margin-top:10px;overflow:auto"><canvas id="cv" class="work"></canvas></div>
+      <div class="note">Click on the page to drop the current text (or the loaded image) at that spot. Stamps are placed in the page's upright orientation. 100% offline.</div>
+    </div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — PDF Editor</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/pdf-lib.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,stripExt,saveBytes,hexToRgb}=FTX;
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+$('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF render</span> &nbsp; <span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} PDF engine</span>`;
+let srcBytes=null,pdf=null,name='document';
+let pages=[]; // {idx,rot,id}
+let stamps=[]; // {pageId,type,xPt,yPt,text,size,color,imgBytes,imgIsPng,wPt,hPt}
+let cur=null,sigImg=null,curScale=1,curPageDims=null;let idc=0;
+const cv=$('cv'),ctx=cv.getContext('2d');
+FTX.wireDrop('dropzone','fileInput',async list=>{const f=list[0];if(!f||FTX.extOf(f.name)!=='pdf'){FTX.status('status','Please choose a PDF.','bad');return;}name=stripExt(f.name);srcBytes=new Uint8Array(await f.arrayBuffer());pdf=await pdfjsLib.getDocument({data:srcBytes.slice()}).promise;pages=[];for(let i=0;i<pdf.numPages;i++)pages.push({idx:i,rot:0,id:++idc});stamps=[];cur=null;await renderThumbs();FTX.hideStatus('status');});
+$('clr').onclick=()=>{srcBytes=null;pdf=null;pages=[];stamps=[];cur=null;$('thumbs').innerHTML='';$('go').disabled=true;$('pc').textContent='—';$('curp').textContent='—';ctx.clearRect(0,0,cv.width,cv.height);cv.width=cv.height=0;FTX.hideStatus('status');};
+$('sig').onchange=async e=>{const f=e.target.files[0];if(!f)return;sigImg={bytes:new Uint8Array(await f.arrayBuffer()),isPng:/png/i.test(f.type),name:f.name};FTX.status('status','Signature loaded — click on the page to place it.','info');};
+$('undo').onclick=()=>{if(cur==null)return;for(let i=stamps.length-1;i>=0;i--){if(stamps[i].pageId===cur.id){stamps.splice(i,1);break;}}drawPage();};
+async function renderThumbs(){
+  $('pc').textContent=pages.length+' pages';$('go').disabled=!pages.length;const box=$('thumbs');box.innerHTML='';
+  for(let i=0;i<pages.length;i++){
+    const pg=pages[i];const t=document.createElement('div');t.className='thumb'+(cur&&cur.id===pg.id?' sel':'');t.draggable=true;
+    t.innerHTML=`<div class="tnum">${i+1}</div>`;const c=document.createElement('canvas');t.appendChild(c);
+    const tools=document.createElement('div');tools.className='tools';tools.innerHTML=`<button title="Rotate">⟳</button><button title="Delete">✕</button>`;
+    tools.children[0].onclick=e=>{e.stopPropagation();pg.rot=(pg.rot+90)%360;renderThumbs();};
+    tools.children[1].onclick=e=>{e.stopPropagation();stamps=stamps.filter(s=>s.pageId!==pg.id);pages.splice(i,1);if(cur&&cur.id===pg.id)cur=null;renderThumbs();};
+    t.appendChild(tools);t.onclick=()=>{cur=pg;$('curp').textContent=(i+1);drawPage();renderThumbs();};box.appendChild(t);
+    try{const page=await pdf.getPage(pg.idx+1);const vp=page.getViewport({scale:0.26,rotation:pg.rot});c.width=Math.ceil(vp.width);c.height=Math.ceil(vp.height);const cc=c.getContext('2d');cc.fillStyle='#fff';cc.fillRect(0,0,c.width,c.height);await page.render({canvasContext:cc,viewport:vp}).promise;}catch(e){}
+    t.addEventListener('dragstart',e=>e.dataTransfer.setData('i',i));
+    t.addEventListener('dragover',e=>e.preventDefault());
+    t.addEventListener('drop',e=>{e.preventDefault();const from=+e.dataTransfer.getData('i');if(from===i)return;const m=pages.splice(from,1)[0];pages.splice(i,0,m);renderThumbs();});
+  }
+}
+async function drawPage(){
+  if(!cur)return;const page=await pdf.getPage(cur.idx+1);
+  const base=page.getViewport({scale:1,rotation:0});curPageDims={w:base.width,h:base.height};
+  const fitW=Math.min(560,base.width*1.5);curScale=fitW/base.width;
+  const vp=page.getViewport({scale:curScale,rotation:0});
+  cv.width=Math.ceil(vp.width);cv.height=Math.ceil(vp.height);ctx.fillStyle='#fff';ctx.fillRect(0,0,cv.width,cv.height);
+  await page.render({canvasContext:ctx,viewport:vp}).promise;
+  // overlay existing stamps for this page
+  for(const s of stamps){if(s.pageId!==cur.id)continue;const cx=s.xPt*curScale,cy=cv.height-s.yPt*curScale;if(s.type==='text'){ctx.fillStyle=s.color;ctx.font=`${s.size*curScale}px Georgia, serif`;ctx.textBaseline='alphabetic';ctx.fillText(s.text,cx,cy);}else{ctx.strokeStyle='#7a2434';ctx.strokeRect(cx,cy-s.hPt*curScale,s.wPt*curScale,s.hPt*curScale);ctx.fillStyle='rgba(122,36,52,.08)';ctx.fillRect(cx,cy-s.hPt*curScale,s.wPt*curScale,s.hPt*curScale);ctx.fillStyle='#7a2434';ctx.font=`${11}px sans-serif`;ctx.fillText('signature',cx+4,cy-4);}}
+}
+cv.addEventListener('click',async e=>{
+  if(!cur)return;const r=cv.getBoundingClientRect();const sx=cv.width/r.width,sy=cv.height/r.height;
+  const px=(e.clientX-r.left)*sx,py=(e.clientY-r.top)*sy;
+  const xPt=px/curScale,yPt=(cv.height-py)/curScale;
+  if(sigImg){let wPt=140,hPt=60;try{const im=await FTX.loadImage(URL.createObjectURL(new Blob([sigImg.bytes])));const ar=im.naturalWidth/im.naturalHeight;hPt=wPt/ar;}catch(e){}stamps.push({pageId:cur.id,type:'img',xPt,yPt,imgBytes:sigImg.bytes,imgIsPng:sigImg.isPng,wPt,hPt});}
+  else if($('txt').value.trim()){stamps.push({pageId:cur.id,type:'text',xPt,yPt,text:$('txt').value,size:+$('tsize').value||18,color:$('tcolor').value});}
+  else{FTX.status('status','Type a caption or load a signature image first.','info');return;}
+  drawPage();
+});
+$('go').onclick=async()=>{
+  if(!pages.length)return;$('go').disabled=true;FTX.progress('progress',5);
+  try{
+    const {PDFDocument,degrees,rgb}=PDFLib;const src=await PDFDocument.load(srcBytes,{ignoreEncryption:true});const out=await PDFDocument.create();
+    const imgCache=new Map();
+    for(let i=0;i<pages.length;i++){
+      const pg=pages[i];FTX.status('status',`Exporting page ${i+1}/${pages.length}…`,'info');
+      const [cp]=await out.copyPages(src,[pg.idx]);
+      const ps=stamps.filter(s=>s.pageId===pg.id);
+      for(const s of ps){
+        if(s.type==='text'){const c=hexToRgb(s.color);cp.drawText(s.text,{x:s.xPt,y:s.yPt-s.size,size:s.size,color:rgb(c.r,c.g,c.b)});}
+        else{let emb=imgCache.get(s.imgBytes);if(!emb){emb=s.imgIsPng?await out.embedPng(s.imgBytes):await out.embedJpg(s.imgBytes);imgCache.set(s.imgBytes,emb);}cp.drawImage(emb,{x:s.xPt,y:s.yPt-s.hPt,width:s.wPt,height:s.hPt});}
+      }
+      if(pg.rot){const curR=cp.getRotation().angle||0;cp.setRotation(degrees((curR+pg.rot)%360));}
+      out.addPage(cp);
+      FTX.progress('progress',Math.round((i+1)/pages.length*88)+5);
+    }
+    saveBytes(await out.save(),name+'-edited.pdf','application/pdf');
+    FTX.status('status','Edited PDF exported.','good');FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),700);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+})();
+</script>
+</body>
+</html>

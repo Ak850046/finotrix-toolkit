@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Add Page Numbers — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>Add Page Numbers</h1><p class="sub">Stamp page numbers onto a PDF</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="card" style="max-width:680px">
+    <div class="card-title"><h3>Upload PDF</h3><span id="pc" class="badge">—</span></div>
+    <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop a PDF</strong><div class="only">PDF</div></div>
+    <input id="fileInput" type="file" accept=".pdf">
+    <div id="fileList" class="file-list"></div>
+    <div class="row">
+      <div class="field"><label>Position</label><select id="pos"><option value="bc" selected>Bottom center</option><option value="br">Bottom right</option><option value="bl">Bottom left</option><option value="tc">Top center</option><option value="tr">Top right</option><option value="tl">Top left</option></select></div>
+      <div class="field"><label>Format</label><select id="fmt"><option value="{n}" selected>1, 2, 3…</option><option value="Page {n}">Page 1</option><option value="{n} of {N}">1 of N</option><option value="- {n} -">- 1 -</option></select></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>Start at</label><input id="start" type="number" value="1" min="0"></div>
+      <div class="field"><label>Font size</label><input id="size" type="number" value="10" min="6" max="48"></div>
+      <div class="field"><label>Margin (pt)</label><input id="margin" type="number" value="24" min="6" max="120"></div>
+    </div>
+    <div class="actions"><button id="go" class="btn btn-primary" disabled>Add numbers</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+    <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+    <div id="libraryState" class="library-state">Loading…</div>
+    <div class="note">100% offline.</div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — Add Page Numbers</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf-lib.min.js"></script>
+<script src="../lib/common.js"></script>
+<script>
+(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes}=FTX;let file=null;
+$('libraryState').innerHTML=`<span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} PDF engine</span>`;
+FTX.wireDrop('dropzone','fileInput',list=>{const f=list[0];if(!f||FTX.extOf(f.name)!=='pdf'){FTX.status('status','Please choose a PDF.','bad');return;}file=f;$('fileList').className='file-list show';$('fileList').innerHTML=`<div class="file-row"><div class="file-kind">PDF</div><div class="file-meta"><strong>${escapeHtml(f.name)}</strong><span>${formatBytes(f.size)}</span></div></div>`;$('go').disabled=false;FTX.hideStatus('status');});
+$('clr').onclick=()=>{file=null;$('fileList').className='file-list';$('fileList').innerHTML='';$('go').disabled=true;$('pc').textContent='—';FTX.hideStatus('status');FTX.hideProgress('progress');};
+$('go').onclick=async()=>{
+  if(!file)return;$('go').disabled=true;FTX.progress('progress',10);
+  try{
+    const {PDFDocument,rgb,StandardFonts}=PDFLib;
+    const doc=await PDFDocument.load(new Uint8Array(await file.arrayBuffer()),{ignoreEncryption:true});
+    const font=await doc.embedFont(StandardFonts.Helvetica);
+    const pages=doc.getPages();$('pc').textContent=pages.length+' pages';
+    const start=+$('start').value||1,size=+$('size').value||10,margin=+$('margin').value||24,fmt=$('fmt').value,pos=$('pos').value;
+    const total=start+pages.length-1;
+    pages.forEach((pg,i)=>{
+      const {width,height}=pg.getSize();const n=start+i;
+      const text=fmt.replace('{n}',n).replace('{N}',total);
+      const tw=font.widthOfTextAtSize(text,size);
+      const left=pos[1]==='l',right=pos[1]==='r';
+      const x=left?margin:right?width-margin-tw:(width-tw)/2;
+      const y=pos[0]==='t'?height-margin-size:margin;
+      pg.drawText(text,{x,y,size,font,color:rgb(0.2,0.2,0.2)});
+    });
+    saveBytes(await doc.save(),stripExt(file.name)+'-numbered.pdf','application/pdf');
+    FTX.status('status',`Numbered ${pages.length} pages.`,'good');FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),700);
+  }catch(e){console.error(e);FTX.status('status',e.message||'Failed.','bad');FTX.hideProgress('progress');}
+  $('go').disabled=false;
+};
+})();
+</script>
+</body>
+</html>
