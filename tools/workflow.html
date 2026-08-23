@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Workflows — Finotrix Toolkit</title>
+<link rel="stylesheet" href="../css/finotrix.css">
+<style>
+  .step{background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:14px;margin-bottom:12px}
+  .step-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .step-num{width:26px;height:26px;border-radius:8px;background:var(--grad);color:#fff;font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .step-head strong{flex:1;font-size:14px}
+  .step-head button{border:none;background:transparent;color:var(--text-faint);cursor:pointer;font-size:14px;padding:4px 7px;border-radius:7px}
+  .step-head button:hover{background:var(--surface-hover);color:var(--accent)}
+  .step-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .step-fields .field{margin:0}
+  .arrow{text-align:center;color:var(--text-faint);font-size:16px;margin:-4px 0 8px}
+  .empty{color:var(--text-soft);font-size:14px;padding:20px;text-align:center;border:1px dashed var(--border-strong);border-radius:12px}
+</style>
+</head>
+<body>
+<div class="topbar"></div>
+<div class="shell">
+  <div class="appbar"><div class="brand"><div class="logo">F</div><div><h1>Workflows</h1><p class="sub">Chain tools into one pipeline</p></div></div><nav><a class="home" href="../index.html">&larr; All tools</a></nav></div>
+  <div class="grid2">
+    <div class="card">
+      <div class="card-title"><h3>1 &middot; Upload PDF</h3><span id="pc" class="badge">—</span></div>
+      <div id="dropzone" class="dropzone" role="button" tabindex="0"><div class="upload-icon">&#8681;</div><strong>Click or drop a PDF</strong><p>The file runs through every step in order.</p><div class="only">PDF</div></div>
+      <input id="fileInput" type="file" accept=".pdf">
+      <div id="fileList" class="file-list"></div>
+
+      <div class="card-title" style="margin-top:20px"><h3>2 &middot; Add a step</h3></div>
+      <div class="field"><label>Tool</label><select id="toolSel"></select></div>
+      <div class="actions"><button id="addStep" class="btn btn-secondary">+ Add step</button></div>
+
+      <div class="card-title" style="margin-top:20px"><h3>Saved workflows</h3></div>
+      <div class="row">
+        <div class="field" style="flex:2"><label>Name</label><input id="wfName" type="text" placeholder="e.g. Statement cleanup"></div>
+        <div class="field" style="flex:0 0 auto;justify-content:flex-end"><label>&nbsp;</label><button id="saveWf" class="btn btn-secondary">Save</button></div>
+      </div>
+      <div class="field"><label>Load</label><select id="loadWf"><option value="">Saved workflows…</option></select></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title"><h3>3 &middot; Workflow</h3><span id="stepCount" class="badge">0 steps</span></div>
+      <div id="steps"></div>
+      <div id="empty" class="empty">Add tools to start building your workflow.</div>
+      <div class="actions"><button id="run" class="btn btn-primary" disabled>Run workflow</button><button id="clr" class="btn btn-secondary">Clear</button></div>
+      <div id="status" class="status"></div><div id="progress" class="progress"><div></div></div>
+      <div id="libraryState" class="library-state">Loading…</div>
+      <div class="note">Each step transforms the PDF and passes it to the next. 100% offline.</div>
+    </div>
+  </div>
+  <footer class="footer"><div><strong>Finotrix Toolkit</strong> — Workflows</div><div>100% offline.</div></footer>
+</div>
+<script src="../lib/pdf.min.js"></script>
+<script src="../lib/pdf-lib.min.js"></script>
+<script src="../lib/tesseract.min.js"></script>
+<script src="../lib/common.js"></script>
+<script src="../lib/ftx-ops.js"></script>
+<script>
+(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes}=FTX;
+if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
+$('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF</span> &nbsp; <span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} engine</span> &nbsp; <span class="${window.Tesseract?'ok':'bad'}">${window.Tesseract?'✓':'✕'} OCR</span>`;
+let file=null; let steps=[]; // [{op,opts}]
+const WFKEY='ftx-workflows';
+
+// populate tool dropdown
+$('toolSel').innerHTML=Object.entries(FTXOPS).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join('');
+
+FTX.wireDrop('dropzone','fileInput',list=>{const f=list[0];if(!f||FTX.extOf(f.name)!=='pdf'){FTX.status('status','Please choose a PDF.','bad');return;}file=f;$('fileList').className='file-list show';$('fileList').innerHTML=`<div class="file-row"><div class="file-kind">PDF</div><div class="file-meta"><strong>${escapeHtml(f.name)}</strong><span>${formatBytes(f.size)}</span></div></div>`;$('pc').textContent=formatBytes(f.size);FTX.hideStatus('status');updateRun();});
+$('addStep').onclick=()=>{const op=$('toolSel').value;const opts={};FTXOPS[op].fields.forEach(f=>opts[f.k]=f.def);steps.push({op,opts});render();};
+$('clr').onclick=()=>{steps=[];render();FTX.hideStatus('status');FTX.hideProgress('progress');};
+
+function fieldHtml(op,i,f){
+  const id=`s${i}_${f.k}`,v=steps[i].opts[f.k];
+  if(f.type==='select')return `<div class="field"><label>${f.label}</label><select data-i="${i}" data-k="${f.k}">${f.options.map(([val,lab])=>`<option value="${val}" ${String(v)===String(val)?'selected':''}>${lab}</option>`).join('')}</select></div>`;
+  if(f.type==='checkbox')return `<div class="field"><label>${f.label}</label><label class="opt" style="margin-top:4px"><input type="checkbox" data-i="${i}" data-k="${f.k}" ${v?'checked':''}><span>enable</span></label></div>`;
+  const t=f.type==='color'?'color':f.type==='password'?'password':f.type==='number'?'number':'text';
+  return `<div class="field"><label>${f.label}</label><input type="${t}" data-i="${i}" data-k="${f.k}" value="${v==null?'':escapeHtml(String(v))}"></div>`;
+}
+function render(){
+  $('stepCount').textContent=steps.length+' step'+(steps.length===1?'':'s');
+  $('empty').style.display=steps.length?'none':'block';
+  $('steps').innerHTML=steps.map((s,i)=>{const op=FTXOPS[s.op];
+    return `${i>0?'<div class="arrow">&#8595;</div>':''}<div class="step"><div class="step-head"><div class="step-num">${i+1}</div><strong>${op.label}</strong>
+      <button data-up="${i}" title="Move up">&#9650;</button><button data-down="${i}" title="Move down">&#9660;</button><button data-del="${i}" title="Remove">&#10005;</button></div>
+      <div class="step-fields">${op.fields.map(f=>fieldHtml(s.op,i,f)).join('')}</div></div>`;}).join('');
+  // wire field inputs
+  $('steps').querySelectorAll('[data-k]').forEach(el=>{
+    const i=+el.dataset.i,k=el.dataset.k;
+    el.oninput=el.onchange=()=>{steps[i].opts[k]= el.type==='checkbox'?el.checked:el.value;};
+  });
+  $('steps').querySelectorAll('[data-del]').forEach(b=>b.onclick=()=>{steps.splice(+b.dataset.del,1);render();});
+  $('steps').querySelectorAll('[data-up]').forEach(b=>b.onclick=()=>{const i=+b.dataset.up;if(i>0){[steps[i-1],steps[i]]=[steps[i],steps[i-1]];render();}});
+  $('steps').querySelectorAll('[data-down]').forEach(b=>b.onclick=()=>{const i=+b.dataset.down;if(i<steps.length-1){[steps[i+1],steps[i]]=[steps[i],steps[i+1]];render();}});
+  updateRun();
+}
+function updateRun(){$('run').disabled=!(file&&steps.length);}
+
+$('run').onclick=async()=>{
+  if(!file||!steps.length)return;$('run').disabled=true;FTX.progress('progress',2);
+  try{
+    let bytes=new Uint8Array(await file.arrayBuffer());
+    for(let i=0;i<steps.length;i++){
+      const s=steps[i],op=FTXOPS[s.op];
+      FTX.status('status',`Step ${i+1}/${steps.length}: ${op.label}…`,'info');
+      bytes=new Uint8Array(await op.run(bytes,s.opts,{onStatus:m=>FTX.status('status',`Step ${i+1}/${steps.length}: ${op.label} — ${m}`,'info')}));
+      FTX.progress('progress',Math.round((i+1)/steps.length*92)+3);
+    }
+    saveBytes(bytes,stripExt(file.name)+'-workflow.pdf','application/pdf');
+    FTX.status('status',`Done — ${steps.length} step(s) applied.`,'good');FTX.progress('progress',100);setTimeout(()=>FTX.hideProgress('progress'),800);
+  }catch(e){console.error(e);FTX.status('status','Failed at run: '+(e.message||e),'bad');FTX.hideProgress('progress');}
+  $('run').disabled=false;
+};
+
+// saved workflows (localStorage)
+function loadStore(){try{return JSON.parse(localStorage.getItem(WFKEY)||'{}');}catch(e){return {};}}
+function refreshSaved(){const s=loadStore();$('loadWf').innerHTML='<option value="">Saved workflows…</option>'+Object.keys(s).map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');}
+$('saveWf').onclick=()=>{const n=$('wfName').value.trim();if(!n){FTX.status('status','Enter a workflow name to save.','bad');return;}if(!steps.length){FTX.status('status','Add steps first.','bad');return;}const s=loadStore();s[n]=steps;localStorage.setItem(WFKEY,JSON.stringify(s));refreshSaved();FTX.status('status',`Saved workflow “${n}”.`,'good');};
+$('loadWf').onchange=()=>{const n=$('loadWf').value;if(!n)return;const s=loadStore();if(s[n]){steps=JSON.parse(JSON.stringify(s[n]));$('wfName').value=n;render();FTX.status('status',`Loaded “${n}”.`,'info');}};
+refreshSaved();render();
+})();
+</script>
+</body>
+</html>
