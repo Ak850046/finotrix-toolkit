@@ -38,6 +38,9 @@
         <div class="field" style="flex:0 0 auto;justify-content:flex-end"><label>&nbsp;</label><button id="saveWf" class="btn btn-secondary">Save</button></div>
       </div>
       <div class="field"><label>Load</label><select id="loadWf"><option value="">Saved workflows…</option></select></div>
+      <div class="actions"><button id="exportWf" class="btn btn-secondary">Export all &darr;</button><button id="importBtn" class="btn btn-secondary">Import &uarr;</button><button id="delWf" class="btn btn-secondary">Delete selected</button></div>
+      <input id="importWf" type="file" accept=".json,application/json" style="display:none">
+      <div class="note">Saved workflows live in this browser. <strong>Export</strong> them to a file to back up or move to another machine, then <strong>Import</strong> there.</div>
     </div>
 
     <div class="card">
@@ -55,10 +58,12 @@
 <script src="../lib/pdf.min.js"></script>
 <script src="../lib/pdf-lib.min.js"></script>
 <script src="../lib/tesseract.min.js"></script>
+<script src="../lib/xlsx.full.min.js"></script>
 <script src="../lib/common.js"></script>
+<script src="../lib/ftx-hdfc.js"></script>
 <script src="../lib/ftx-ops.js"></script>
 <script>
-(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes}=FTX;
+(()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes,saveBlob}=FTX;
 if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
 $('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF</span> &nbsp; <span class="${window.PDFLib?'ok':'bad'}">${window.PDFLib?'✓':'✕'} engine</span> &nbsp; <span class="${window.Tesseract?'ok':'bad'}">${window.Tesseract?'✓':'✕'} OCR</span>`;
 let file=null; let steps=[]; // [{op,opts}]
@@ -81,10 +86,11 @@ function fieldHtml(op,i,f){
 function render(){
   $('stepCount').textContent=steps.length+' step'+(steps.length===1?'':'s');
   $('empty').style.display=steps.length?'none':'block';
-  $('steps').innerHTML=steps.map((s,i)=>{const op=FTXOPS[s.op];
-    return `${i>0?'<div class="arrow">&#8595;</div>':''}<div class="step"><div class="step-head"><div class="step-num">${i+1}</div><strong>${op.label}</strong>
+  $('steps').innerHTML=steps.map((s,i)=>{const op=FTXOPS[s.op];const term=op.end;const misplaced=term&&i!==steps.length-1;
+    return `${i>0?'<div class="arrow">&#8595;</div>':''}<div class="step"><div class="step-head"><div class="step-num">${i+1}</div><strong>${op.label}${term?` <span class="badge" style="margin-left:6px">ends &rarr; ${op.endExt||'file'}</span>`:''}</strong>
       <button data-up="${i}" title="Move up">&#9650;</button><button data-down="${i}" title="Move down">&#9660;</button><button data-del="${i}" title="Remove">&#10005;</button></div>
-      <div class="step-fields">${op.fields.map(f=>fieldHtml(s.op,i,f)).join('')}</div></div>`;}).join('');
+      ${op.fields.length?`<div class="step-fields">${op.fields.map(f=>fieldHtml(s.op,i,f)).join('')}</div>`:''}
+      ${misplaced?'<div class="note" style="margin-top:8px;border-color:var(--warn);color:var(--warn)">This step produces a file and must be the LAST step &mdash; move it to the end.</div>':''}</div>`;}).join('');
   // wire field inputs
   $('steps').querySelectorAll('[data-k]').forEach(el=>{
     const i=+el.dataset.i,k=el.dataset.k;
@@ -100,11 +106,21 @@ function updateRun(){$('run').disabled=!(file&&steps.length);}
 $('run').onclick=async()=>{
   if(!file||!steps.length)return;$('run').disabled=true;FTX.progress('progress',2);
   try{
+    // validate: a terminal (file-producing) step may only be the last one
+    const termIdx=steps.findIndex(s=>FTXOPS[s.op].end);
+    if(termIdx>=0&&termIdx!==steps.length-1)throw new Error(`"${FTXOPS[steps[termIdx].op].label}" must be the last step.`);
     let bytes=new Uint8Array(await file.arrayBuffer());
     for(let i=0;i<steps.length;i++){
       const s=steps[i],op=FTXOPS[s.op];
       FTX.status('status',`Step ${i+1}/${steps.length}: ${op.label}…`,'info');
-      bytes=new Uint8Array(await op.run(bytes,s.opts,{onStatus:m=>FTX.status('status',`Step ${i+1}/${steps.length}: ${op.label} — ${m}`,'info')}));
+      const ctx={onStatus:m=>FTX.status('status',`Step ${i+1}/${steps.length}: ${op.label} — ${m}`,'info')};
+      if(op.end){
+        const res=await op.run(bytes,s.opts,ctx);
+        saveBlob(res.blob,stripExt(file.name)+(res.name||op.endExt||'.out'));
+        FTX.progress('progress',100);FTX.status('status',`Done — ${op.label}. ${res.note||''}`,'good');setTimeout(()=>FTX.hideProgress('progress'),800);
+        $('run').disabled=false;return;
+      }
+      bytes=new Uint8Array(await op.run(bytes,s.opts,ctx));
       FTX.progress('progress',Math.round((i+1)/steps.length*92)+3);
     }
     saveBytes(bytes,stripExt(file.name)+'-workflow.pdf','application/pdf');
@@ -118,6 +134,10 @@ function loadStore(){try{return JSON.parse(localStorage.getItem(WFKEY)||'{}');}c
 function refreshSaved(){const s=loadStore();$('loadWf').innerHTML='<option value="">Saved workflows…</option>'+Object.keys(s).map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');}
 $('saveWf').onclick=()=>{const n=$('wfName').value.trim();if(!n){FTX.status('status','Enter a workflow name to save.','bad');return;}if(!steps.length){FTX.status('status','Add steps first.','bad');return;}const s=loadStore();s[n]=steps;localStorage.setItem(WFKEY,JSON.stringify(s));refreshSaved();FTX.status('status',`Saved workflow “${n}”.`,'good');};
 $('loadWf').onchange=()=>{const n=$('loadWf').value;if(!n)return;const s=loadStore();if(s[n]){steps=JSON.parse(JSON.stringify(s[n]));$('wfName').value=n;render();FTX.status('status',`Loaded “${n}”.`,'info');}};
+$('delWf').onclick=()=>{const n=$('loadWf').value;if(!n){FTX.status('status','Pick a saved workflow to delete.','bad');return;}const s=loadStore();delete s[n];localStorage.setItem(WFKEY,JSON.stringify(s));refreshSaved();FTX.status('status',`Deleted “${n}”.`,'info');};
+$('exportWf').onclick=()=>{const s=loadStore();if(!Object.keys(s).length){FTX.status('status','No saved workflows to export.','bad');return;}saveBlob(new Blob([JSON.stringify({finotrixWorkflows:s},null,2)],{type:'application/json'}),'finotrix-workflows.json');FTX.status('status',`Exported ${Object.keys(s).length} workflow(s).`,'good');};
+$('importBtn').onclick=()=>$('importWf').click();
+$('importWf').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{const j=JSON.parse(await f.text());const inc=j.finotrixWorkflows||j;const s=loadStore();let n=0;for(const k in inc){if(Array.isArray(inc[k])){s[k]=inc[k];n++;}}localStorage.setItem(WFKEY,JSON.stringify(s));refreshSaved();FTX.status('status',`Imported ${n} workflow(s).`,'good');}catch(err){FTX.status('status','Could not read that workflow file.','bad');}e.target.value='';};
 refreshSaved();render();
 })();
 </script>
