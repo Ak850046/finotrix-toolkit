@@ -33,7 +33,9 @@
       <select id="mode">
         <option value="tables" selected>Auto &mdash; one sheet per detected table</option>
         <option value="all">Auto &mdash; all rows on one sheet</option>
-        <option value="hdfc">HDFC bank statement &rarr; clean columns</option>
+        <option value="hdfc">Bank statement: HDFC &rarr; clean columns</option>
+        <option value="canara">Bank statement: Canara &rarr; clean columns</option>
+        <option value="sbi">Bank statement: SBI (beta) &rarr; clean columns</option>
       </select>
     </div>
     <div class="field">
@@ -44,7 +46,7 @@
       </select>
     </div>
     <div class="options" id="hdfcNote" style="display:none">
-      <div class="note"><strong>HDFC statement mode:</strong> detects the statement headers and rebuilds clean columns &mdash; multi-line narration merged, amounts as numbers, running-balance tie check. Text HDFC e-statements only (not scanned images).</div>
+      <div class="note"><strong>Bank-statement mode:</strong> detects the statement's own column headers and rebuilds clean columns &mdash; multi-line narration merged, amounts as numbers, running-balance tie check. Works on <em>text</em> e-statements only (not scanned images &mdash; run those through OCR first). SBI is beta &mdash; send a native SBI e-statement if a column drifts.</div>
     </div>
     <label class="opt"><input id="ocr" type="checkbox"><span><strong>OCR</strong> for scanned pages (offline) &mdash; auto/table modes only</span></label>
     <div class="actions"><button id="go" class="btn btn-primary" disabled>Convert</button><button id="clr" class="btn btn-secondary">Clear</button></div>
@@ -64,7 +66,7 @@
 (()=>{const {$,formatBytes,escapeHtml,stripExt,saveBytes,saveBlob}=FTX;let files=[]; // [{file,locked,pw}]
 if(window.pdfjsLib)pdfjsLib.GlobalWorkerOptions.workerSrc='../lib/pdf.worker.min.js';
 $('libraryState').innerHTML=`<span class="${window.pdfjsLib?'ok':'bad'}">${window.pdfjsLib?'✓':'✕'} PDF</span> &nbsp; <span class="${window.XLSX?'ok':'bad'}">${window.XLSX?'✓':'✕'} Excel</span> &nbsp; <span class="${window.JSZip?'ok':'bad'}">${window.JSZip?'✓':'✕'} ZIP</span> &nbsp; <span class="${window.Tesseract?'ok':'bad'}">${window.Tesseract?'✓':'✕'} OCR</span>`;
-$('mode').onchange=()=>{$('hdfcNote').style.display=$('mode').value==='hdfc'?'':'none';};
+$('mode').onchange=()=>{$('hdfcNote').style.display=['hdfc','canara','sbi'].includes($('mode').value)?'':'none';};
 $('pwSame').onchange=()=>{$('pwList').style.display=$('pwSame').checked?'none':'flex';};
 
 FTX.wireDrop('dropzone','fileInput',async list=>{
@@ -102,7 +104,7 @@ function pwFor(it){ if(!it.locked) return undefined; return $('pwSame').checked 
 function pad(rows){const cols=Math.max(1,...rows.map(r=>r.length));return rows.map(r=>Array.from({length:cols},(_,i)=>r[i]==null?'':r[i]));}
 
 async function sheetsForFile(f,mode,onStatus,password){
-  if(mode==='hdfc'){const {rows,count,warn}=await parseHDFC(f,onStatus,password);return {sheets:[{name:stripExt(f.name),aoa:rows}],note:`${f.name}: ${count} txns`+(warn?' '+warn:'')};}
+  if(BANKS[mode]){const {rows,count,warn}=await parseBank(f,BANKS[mode],onStatus,password);return {sheets:[{name:stripExt(f.name),aoa:rows}],note:`${f.name}: ${count} txns`+(warn?' '+warn:'')};}
   const pages=await FTXPDF.extract(f,{ocr:$('ocr').checked,password,onStatus,onProgress:()=>{}});
   if(mode==='all'){const rows=[];pages.forEach(pg=>pg.lines.forEach(l=>rows.push(l.cells&&l.cells.length?l.cells:[l.text])));return {sheets:[{name:stripExt(f.name),aoa:pad(rows)}],note:`${f.name}: exported`};}
   const blocks=FTXPDF.tableBlocks(pages);
@@ -110,7 +112,7 @@ async function sheetsForFile(f,mode,onStatus,password){
   return {sheets:blocks.map((b,i)=>({name:stripExt(f.name)+(blocks.length>1?` T${i+1}`:''),aoa:pad(b.rows)})),note:`${f.name}: ${blocks.length} table(s)`};
 }
 function safeName(used,base){let n=String(base||'Sheet').replace(/[\\\/?*\[\]:]/g,'-').slice(0,31)||'Sheet';let x=n,k=2;while(used.has(x.toLowerCase())){const suf=` (${k++})`;x=n.slice(0,31-suf.length)+suf;}used.add(x.toLowerCase());return x;}
-function applyHdfcCols(ws){ws['!cols']=[{wch:11},{wch:52},{wch:16},{wch:11},{wch:14},{wch:14},{wch:16}];}
+function applyBankCols(ws,mode){const cfg=BANKS[mode];if(!cfg)return;ws['!cols']=[{wch:11}].concat(cfg.order.map(k=>({wch:k===cfg.narr?52:14})));}
 function wbToBytes(wb){return new Uint8Array(XLSX.write(wb,{type:'array',bookType:'xlsx'}));}
 
 $('go').onclick=async()=>{
@@ -126,7 +128,7 @@ $('go').onclick=async()=>{
       const used=new Set();
       try{
         const {sheets,note}=await sheetsForFile(it.file,mode,m=>FTX.status('status',`(${idx+1}/${files.length}) ${it.file.name} — ${m}`,'info'),pwFor(it));
-        for(const s of sheets){const ws=XLSX.utils.aoa_to_sheet(s.aoa);if(mode==='hdfc')applyHdfcCols(ws);XLSX.utils.book_append_sheet(wb,ws,safeName(used,s.name));}
+        for(const s of sheets){const ws=XLSX.utils.aoa_to_sheet(s.aoa);if(BANKS[mode])applyBankCols(ws,mode);XLSX.utils.book_append_sheet(wb,ws,safeName(used,s.name));}
         notes.push(note); ok++; return true;
       }catch(e){const wrong=/password/i.test(e.message||'');notes.push(`${it.file.name}: ${wrong?'wrong/missing password — skipped':'failed ('+(e.message||'')+')'}`);return false;}
     };
@@ -149,61 +151,77 @@ $('go').onclick=async()=>{
   $('go').disabled=false;
 };
 
-// ================= HDFC bank-statement parser =================
-const DATE=/^\d{2}\/\d{2}\/\d{2,4}$/;
+// ================= Bank-statement parsers (config-driven) =================
+const DATE=/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}$/;
 const numOf=s=>{const t=String(s).replace(/,/g,'').replace(/[^0-9.\-]/g,'');return t&&/\d/.test(t)?parseFloat(t):null;};
-const isHeaderRow=j=>/Narration/i.test(j)&&/Withdrawal/i.test(j)&&/Deposit/i.test(j)&&/Closing/i.test(j);
-const SKIP=/Page\s*No|STATEMENT\s+SUMMARY|Opening\s+Balance|Closing\s+Bal|Dr\s+Count|Cr\s+Count|Generated\s+(On|By)|computer\s+generated|Registered\s+Office|Account\s+Branch|Account\s+No|A\/C\s+Open|Statement\s+From|IFSC|MICR|Cust\s+ID|Nomination|Branch\s+Code|Account\s+(Status|Type)|Currency|Phone\s+no|OD\s+Limit|RTGS\/NEFT|JOINT\s+HOLDERS|Contents\s+of\s+this|HDFC\s+BANK\s+LIMITED|GSTIN|hdfcbank\.com|https?:\/\/|goods-and-service|this\s+statement|The\s+address|Statement\s+of\s+account|Requesting|Sanctioned/i;
+const SKIP=/Page\s*No|STATEMENT\s+SUMMARY|Opening\s+Balance|Closing\s+Bal|Dr\s+Count|Cr\s+Count|Generated\s+(On|By)|computer\s+generated|Registered\s+Office|Account\s+Branch|Account\s+No|A\/C\s+Open|Statement\s+(From|for)|IFSC|MICR|Cust(omer)?\s*I[dD]|Nomination|Branch\s+(Code|Name)|Account\s+(Status|Type)|Currency|Phone\s+no|OD\s+Limit|RTGS\/NEFT|JOINT\s+HOLDERS|Contents\s+of\s+this|HDFC\s+BANK\s+LIMITED|GSTIN|hdfcbank\.com|https?:\/\/|goods-and-service|this\s+statement|The\s+address|Statement\s+of\s+account|Requesting|Sanctioned|Product\s+(Code|Name)|Total\s+(Withdrawal|Deposit)/i;
 
-async function parseHDFC(file,onStatus,password){
+const BANKS={
+  hdfc:{label:'HDFC', needs:[/Narration/i,/Withdrawal/i,/Deposit/i,/Closing/i],
+    find:{narration:/Narration/i,ref:/Chq|Ref/i,value:/Value/i,withdrawal:/Withdrawal/i,deposit:/Deposit/i,closing:/Closing/i},
+    order:['narration','ref','value','withdrawal','deposit','closing'], amounts:['withdrawal','deposit','closing'], narr:'narration',
+    out:['Date','Narration','Chq./Ref.No.','Value Date','Withdrawal','Deposit','Closing Balance'], tie:{dr:'withdrawal',cr:'deposit',bal:'closing'}},
+  canara:{label:'Canara', needs:[/Particulars/i,/Deposits/i,/Withdrawals/i,/Balance/i],
+    find:{particulars:/Particulars/i,deposits:/Deposits/i,withdrawals:/Withdrawals/i,balance:/^Balance/i},
+    order:['particulars','deposits','withdrawals','balance'], amounts:['deposits','withdrawals','balance'], narr:'particulars',
+    out:['Date','Particulars','Deposits','Withdrawals','Balance'], tie:{dr:'withdrawals',cr:'deposits',bal:'balance'}},
+  sbi:{label:'SBI', needs:[/Description|Narration/i,/Debit|Withdrawal/i,/Credit|Deposit/i,/Balance/i],
+    find:{description:/Description|Narration/i,ref:/Ref|Cheque|Chq/i,debit:/Debit|Withdrawal/i,credit:/Credit|Deposit/i,balance:/Balance/i},
+    order:['description','ref','debit','credit','balance'], amounts:['debit','credit','balance'], narr:'description',
+    out:['Date','Description','Ref/Cheque No.','Debit','Credit','Balance'], tie:{dr:'debit',cr:'credit',bal:'balance'}},
+};
+function findCols(items,find){const o={};for(const k in find){const it=items.find(i=>find[k].test(i.t));o[k]=it?it.x:null;}return o;}
+function colForCat(x,cols){let best=cols[0].key;for(const c of cols){if(x>=c.x-6)best=c.key;else break;}return best;}
+
+async function parseBank(file,cfg,onStatus,password){
   const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer()),password}).promise;
-  let colx=null,nonDate=null; const txns=[]; let cur=null; let warn='';
+  let colx=null,nonDate=null; const txns=[]; let warn='';
   for(let p=1;p<=pdf.numPages;p++){
     if(onStatus&&(p===1||p%10===0||p===pdf.numPages))onStatus(`page ${p}/${pdf.numPages}…`);
     const tc=await (await pdf.getPage(p)).getTextContent();
     const items=(tc.items||[]).filter(i=>i.str&&i.str.trim()).map(i=>({t:i.str.trim(),x:+(i.transform?.[4]||0),y:+(i.transform?.[5]||0)}));
-    const rows=[]; const tol=4;
-    for(const it of items){let r=rows.find(r=>Math.abs(r.y-it.y)<=tol);if(!r){r={y:it.y,items:[]};rows.push(r);}r.items.push(it);}
-    rows.sort((a,b)=>b.y-a.y); rows.forEach(r=>r.items.sort((a,b)=>a.x-b.x));
-    for(const row of rows){
+    const rowMap=[]; const tol=4;
+    for(const it of items){let r=rowMap.find(r=>Math.abs(r.y-it.y)<=tol);if(!r){r={y:it.y,items:[]};rowMap.push(r);}r.items.push(it);}
+    rowMap.sort((a,b)=>b.y-a.y); rowMap.forEach(r=>r.items.sort((a,b)=>a.x-b.x));
+    const pageTxns=[],pageNarr=[];
+    for(const row of rowMap){
       const joined=row.items.map(i=>i.t).join(' ');
-      if(isHeaderRow(joined)){ if(!colx){colx=headerCols(row.items);nonDate=['narration','ref','value','withdrawal','deposit','closing'].filter(k=>colx[k]!=null).map(k=>({key:k,x:colx[k]})).sort((a,b)=>a.x-b.x);} continue; }
+      if(cfg.needs.every(re=>re.test(joined))){ if(!colx){colx=findCols(row.items,cfg.find);nonDate=cfg.order.filter(k=>colx[k]!=null).map(k=>({key:k,x:colx[k]})).sort((a,b)=>a.x-b.x);} continue; }
       if(!colx) continue;
       if(SKIP.test(joined)) continue;
       const first=row.items[0];
-      const isNew = first && DATE.test(first.t) && first.x < colx.narration-15;
-      if(!isNew && !cur) continue;
-      const bucket={narration:[],ref:[],value:[],withdrawal:[],deposit:[],closing:[]};
-      for(let k=(isNew?1:0);k<row.items.length;k++){const it=row.items[k];bucket[colFor2(it.x,nonDate)].push(it.t);}
+      const isNew = first && DATE.test(first.t) && first.x < colx[cfg.narr]-15;
+      const bucket={}; cfg.order.forEach(k=>bucket[k]=[]);
+      for(let k=(isNew?1:0);k<row.items.length;k++){const it=row.items[k];bucket[colForCat(it.x,nonDate)].push(it.t);}
       if(isNew){
-        if(cur)txns.push(cur);
-        cur={date:first.t,narr:bucket.narration.join(' ').trim(),ref:bucket.ref.join(' ').trim(),vdate:bucket.value.join(' ').trim(),wd:bucket.withdrawal.join(' ').trim(),dep:bucket.deposit.join(' ').trim(),bal:bucket.closing.join(' ').trim()};
-      }else{
-        const nn=bucket.narration.join(' ').trim(); if(nn)cur.narr=(cur.narr+' '+nn).trim();
-        const rr=bucket.ref.join(' ').trim(); if(rr&&!cur.ref)cur.ref=rr;
-        const vv=bucket.value.join(' ').trim(); if(vv&&!cur.vdate)cur.vdate=vv;
-        const ww=bucket.withdrawal.join(' ').trim(); if(ww&&!cur.wd)cur.wd=ww;
-        const dd=bucket.deposit.join(' ').trim(); if(dd&&!cur.dep)cur.dep=dd;
-        const bb=bucket.closing.join(' ').trim(); if(bb&&!cur.bal)cur.bal=bb;
+        const t={date:first.t,y:row.y,pieces:[]};
+        cfg.order.forEach(k=>{ if(k===cfg.narr){const s=bucket[k].join(' ').trim();if(s)t.pieces.push({y:row.y,text:s});} else t[k]=bucket[k].join(' ').trim(); });
+        pageTxns.push(t);
+      } else {
+        const s=bucket[cfg.narr].join(' ').trim(); if(s)pageNarr.push({y:row.y,text:s});
       }
     }
+    for(const n of pageNarr){
+      if(pageTxns.length){let best=pageTxns[0];for(const t of pageTxns)if(Math.abs(t.y-n.y)<Math.abs(best.y-n.y))best=t;best.pieces.push(n);}
+      else if(txns.length)txns[txns.length-1].pieces.push(n);
+    }
+    txns.push(...pageTxns);
   }
-  if(cur)txns.push(cur);
   await pdf.destroy();
-  if(!colx) throw new Error(`Could not find HDFC columns in "${file.name}". Is it a text HDFC e-statement (not a scan)?`);
-  const head=['Date','Narration','Chq./Ref.No.','Value Date','Withdrawal','Deposit','Closing Balance'];
-  const out=[head];
-  for(const t of txns) out.push([t.date,t.narr,t.ref,t.vdate,numOf(t.wd),numOf(t.dep),numOf(t.bal)]);
+  if(!colx) throw new Error(`Could not find ${cfg.label} statement columns in "${file.name}". Is it a text ${cfg.label} e-statement (not a scanned image)?`);
+  const out=[cfg.out];
+  for(const t of txns){
+    const narr=t.pieces.sort((a,b)=>b.y-a.y).map(p=>p.text).join(' ').replace(/\s+/g,' ').trim();
+    const rowArr=[t.date];
+    for(const k of cfg.order){ if(k===cfg.narr)rowArr.push(narr); else if(cfg.amounts.includes(k))rowArr.push(numOf(t[k])); else rowArr.push(t[k]||''); }
+    out.push(rowArr);
+  }
+  const pos={}; cfg.order.forEach((k,idx)=>pos[k]=idx+1);
   let mism=0;
-  for(let i=2;i<out.length;i++){const prev=out[i-1][6],c2=out[i][6],w=out[i][4]||0,d=out[i][5]||0;if(typeof prev==='number'&&typeof c2==='number'&&Math.abs(prev-(w||0)+(d||0)-c2)>1)mism++;}
+  for(let i=2;i<out.length;i++){const prev=out[i-1][pos[cfg.tie.bal]],c2=out[i][pos[cfg.tie.bal]],w=out[i][pos[cfg.tie.dr]]||0,d=out[i][pos[cfg.tie.cr]]||0;if(typeof prev==='number'&&typeof c2==='number'&&Math.abs(prev-(w||0)+(d||0)-c2)>1)mism++;}
   if(mism>0)warn=`(${mism} balance mismatch)`;
   return {rows:out,count:txns.length,warn};
 }
-function headerCols(items){
-  const find=re=>{const it=items.find(i=>re.test(i.t));return it?it.x:null;};
-  return {date:find(/^Date/i),narration:find(/Narration/i),ref:find(/Chq|Ref/i),value:find(/Value/i),withdrawal:find(/Withdrawal/i),deposit:find(/Deposit/i),closing:find(/Closing/i)};
-}
-function colFor2(x,cols){ let best=cols[0].key; for(const c of cols){ if(x>=c.x-6) best=c.key; else break; } return best; }
 })();
 </script>
 </body>

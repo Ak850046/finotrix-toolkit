@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>To Markdown — Finotrix Toolkit</title>
 <link rel="stylesheet" href="../css/finotrix.css">
+<style>
+  #pwPanel{border:1px solid var(--warn);background:var(--warn-soft);border-radius:var(--radius);padding:14px;margin:14px 0}
+  #pwPanel .card-title h3{color:var(--warn)}
+  .lock{color:var(--warn);font-weight:700;margin-left:6px;font-size:11.5px}
+</style>
 </head>
 <body>
 <div class="topbar"></div>
@@ -24,6 +29,12 @@
       </div>
       <input id="fileInput" type="file" multiple accept=".pdf,.docx,.xlsx,.xls,.csv">
       <div id="fileList" class="file-list"></div>
+      <div id="pwPanel" style="display:none">
+        <div class="card-title"><h3>&#128274; Password-protected PDF(s)</h3><span class="badge" id="pwCount"></span></div>
+        <div class="field"><label>Password</label><input id="pwAll" type="password" placeholder="Enter the PDF password"></div>
+        <label class="opt"><input id="pwSame" type="checkbox" checked><span><strong>Same password for all</strong><br>Untick to enter a different password for each locked file below.</span></label>
+        <div id="pwList" style="display:none;flex-direction:column;gap:8px;margin-top:10px"></div>
+      </div>
       <div class="options">
         <label class="opt"><input id="smartStructure" type="checkbox" checked><span><strong>Smart structure</strong><br>Detect headings, lists, paragraphs and likely PDF tables.</span></label>
         <label class="opt"><input id="ocrFallback" type="checkbox" checked><span><strong>OCR for scanned PDF pages</strong><br>Reads image-only pages with the bundled offline engine.</span></label>
@@ -75,6 +86,7 @@ function checkLibs(){
 window.addEventListener('load',()=>setTimeout(checkLibs,150));
 FTX.wireDrop('dropzone','fileInput',handleFiles);
 $('clearBtn').onclick=clearAll; $('convertBtn').onclick=convertAll;
+$('pwSame').onchange=()=>{$('pwList').style.display=$('pwSame').checked?'none':'flex';};
 $('dlMd').onclick=()=>dl('.md','text/markdown'); $('dlTxt').onclick=dlTxt; $('dlJson').onclick=dlJson;
 $('copyBtn').onclick=copy; $('preview').addEventListener('input',()=>stats($('preview').value));
 
@@ -82,31 +94,45 @@ function validFile(f){return f&&OK.includes(extOf(f.name));}
 function handleFiles(list){
   const arr=Array.from(list||[]); const valid=arr.filter(validFile); const bad=arr.length-valid.length;
   if(bad) FTX.status('status',`Ignored ${bad} unsupported file(s).`, valid.length?'info':'bad');
-  for(const f of valid) if(!state.files.some(x=>x.file.name===f.name&&x.file.size===f.size)) state.files.push({file:f,ext:extOf(f.name),markdown:''});
-  state.markdown=''; $('preview').value=''; $('resultBadge').textContent='READY'; resetExports(); stats(''); render();
+  for(const f of valid) if(!state.files.some(x=>x.file.name===f.name&&x.file.size===f.size)) state.files.push({file:f,ext:extOf(f.name),markdown:'',locked:undefined,pw:''});
+  state.markdown=''; $('preview').value=''; $('resultBadge').textContent='READY'; resetExports(); stats(''); render(); refreshLocks();
 }
+async function refreshLocks(){
+  for(const it of state.files){ if(it.ext==='pdf'&&it.locked===undefined){FTX.status('status',`Checking ${it.file.name}…`,'info');it.locked=await FTX.isPdfLocked(it.file);} else if(it.locked===undefined) it.locked=false; }
+  FTX.hideStatus('status');
+  const locked=state.files.filter(f=>f.locked);
+  $('pwPanel').style.display=locked.length?'':'none';
+  $('pwCount').textContent=locked.length+' file(s)';
+  $('pwList').style.display=$('pwSame').checked?'none':'flex';
+  $('pwList').innerHTML=locked.map(it=>{const gi=state.files.indexOf(it);return `<div class="file-row"><div class="file-kind">${gi+1}</div><div class="file-meta"><strong>${escapeHtml(it.file.name)}</strong></div><input type="password" class="pwField" data-i="${gi}" placeholder="password" value="${it.pw?escapeHtml(it.pw):''}"></div>`;}).join('');
+  $('pwList').querySelectorAll('.pwField').forEach(inp=>inp.oninput=e=>{state.files[+e.target.dataset.i].pw=e.target.value;});
+  render();
+}
+function pwFor(it){ if(!it.locked) return undefined; return $('pwSame').checked ? ($('pwAll').value||'') : (it.pw||''); }
 function render(){
   const box=$('fileList');
   if(!state.files.length){box.classList.remove('show');box.innerHTML='';updateBtn();return;}
   box.classList.add('show');
-  box.innerHTML=state.files.map((f,i)=>`<div class="file-row"><div class="file-kind">${f.ext.toUpperCase()}</div><div class="file-meta"><strong>${escapeHtml(f.file.name)}</strong><span>${formatBytes(f.file.size)}</span></div><button class="file-remove" data-i="${i}">✕</button></div>`).join('');
-  box.querySelectorAll('.file-remove').forEach(b=>b.onclick=e=>{state.files.splice(+e.target.dataset.i,1);render();});
+  box.innerHTML=state.files.map((f,i)=>`<div class="file-row"><div class="file-kind">${f.ext.toUpperCase()}</div><div class="file-meta"><strong>${escapeHtml(f.file.name)}${f.locked?'<span class="lock">&#128274; locked</span>':''}</strong><span>${formatBytes(f.file.size)}</span></div><button class="file-remove" data-i="${i}">✕</button></div>`).join('');
+  box.querySelectorAll('.file-remove').forEach(b=>b.onclick=e=>{state.files.splice(+e.target.dataset.i,1);render();refreshLocks();});
   updateBtn();
 }
-function clearAll(){state.files=[];state.markdown='';$('preview').value='';$('resultBadge').textContent='WAITING';resetExports();stats('');FTX.hideProgress('progress');FTX.hideStatus('status');render();}
+function clearAll(){state.files=[];state.markdown='';$('preview').value='';$('resultBadge').textContent='WAITING';resetExports();stats('');FTX.hideProgress('progress');FTX.hideStatus('status');$('pwPanel').style.display='none';render();}
 function resetExports(){['dlMd','dlTxt','dlJson','copyBtn'].forEach(id=>$(id).disabled=true);}
 function libReady(ext){if(ext==='pdf')return!!window.pdfjsLib;if(ext==='docx')return!!window.mammoth&&!!window.TurndownService;return!!window.XLSX;}
 function updateBtn(){$('convertBtn').disabled=!(state.files.length&&state.files.every(f=>libReady(f.ext)));}
 
 async function convertAll(){
   if(!state.files.length)return;
+  const missing=state.files.filter(it=>it.locked && !pwFor(it));
+  if(missing.length){FTX.status('status',`Enter the password for ${missing.length} locked PDF(s) first.`,'bad');return;}
   $('convertBtn').disabled=true; FTX.progress('progress',3); $('resultBadge').textContent='CONVERTING';
   try{
     for(let i=0;i<state.files.length;i++){
       const f=state.files[i];
       FTX.status('status',`Converting ${i+1}/${state.files.length}: ${f.file.name}…`,'info');
       let md='';
-      if(f.ext==='pdf')md=await convertPdf(f.file);
+      if(f.ext==='pdf')md=await convertPdf(f.file,pwFor(f));
       else if(f.ext==='docx')md=await convertDocx(f.file);
       else md=await convertSheet(f);
       f.markdown=finalCleanup(md,stripExt(f.file.name));
@@ -141,8 +167,8 @@ async function convertSheet(f){
 function parseCsv(text){const rows=[];let row=[],cur='',q=false;const s=String(text||'').replace(/\r\n/g,'\n').replace(/\r/g,'\n');for(let i=0;i<s.length;i++){const c=s[i];if(q){if(c==='"'){if(s[i+1]==='"'){cur+='"';i++;}else q=false;}else cur+=c;}else{if(c==='"')q=true;else if(c===','){row.push(cur);cur='';}else if(c==='\n'){row.push(cur);rows.push(row);row=[];cur='';}else cur+=c;}}if(cur.length||row.length){row.push(cur);rows.push(row);}return rows.filter(r=>r.some(x=>String(x).trim()!==''));}
 function sheetTable(rows){const cols=Math.max(1,...rows.map(r=>r.length));const esc=s=>String(s).replace(/\|/g,'\\|').replace(/\s+/g,' ').trim();const norm=rows.map(r=>Array.from({length:cols},(_,i)=>esc(r[i]==null?'':r[i])));const sep=Array(cols).fill('---');return['| '+norm[0].join(' | ')+' |','| '+sep.join(' | ')+' |',...norm.slice(1).map(r=>'| '+r.join(' | ')+' |')].join('\n');}
 
-async function convertPdf(file){
-  const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+async function convertPdf(file,password){
+  const pdf=await pdfjsLib.getDocument({data:new Uint8Array(await file.arrayBuffer()),password}).promise;
   const pages=[];
   for(let p=1;p<=pdf.numPages;p++){
     FTX.status('status',`PDF page ${p}/${pdf.numPages}…`,'info');
