@@ -21,7 +21,7 @@
     </div>
     <div class="row" id="editOpts">
       <div class="field"><label>Detect headings</label><select id="headings"><option value="1" selected>Yes (by font size)</option><option value="0">No</option></select></div>
-      <div class="field"><label>OCR scanned pages</label><select id="ocr"><option value="1" selected>Yes (offline)</option><option value="0">No</option></select></div>
+      <div class="field"><label>OCR scanned pages</label><select id="ocr"><option value="1" selected>Auto (only if no text)</option><option value="force">Force re-OCR (ignore text layer)</option><option value="0">No</option></select></div>
     </div>
     <div class="row" id="visOpts" style="display:none">
       <div class="field"><label>Image resolution</label><select id="vdpi"><option value="150">150 DPI</option><option value="200" selected>200 DPI</option><option value="300">300 DPI (large)</option></select></div>
@@ -61,7 +61,8 @@ $('go').onclick=async()=>{
 // ---------- EDITABLE: reconstruct tables / headings / paragraphs ----------
 async function buildEditable(file){
   const {Document,Packer,Paragraph,TextRun,HeadingLevel,Table,TableRow,TableCell,WidthType,PageBreak}=docx;
-  const pages=await FTXPDF.extract(file,{ocr:$('ocr').value==='1',onStatus:m=>FTX.status('status',m,'info'),onProgress:p=>FTX.progress('progress',Math.min(70,p))});
+  const ocrMode=$('ocr').value;
+  const pages=await FTXPDF.extract(file,{ocr:ocrMode!=='0',forceOcr:ocrMode==='force',onStatus:m=>FTX.status('status',m,'info'),onProgress:p=>FTX.progress('progress',Math.min(70,p))});
   const body=FTXPDF.medianSize(pages);const detectH=$('headings').value==='1';
   const children=[];
   for(let pi=0;pi<pages.length;pi++){
@@ -114,7 +115,7 @@ async function buildVisual(file){
     const wPx=Math.round(pts.width*96/72),hPx=Math.round(pts.height*96/72);
     sections.push({
       properties:{page:{size:{width:wTw,height:hTw},margin:{top:0,right:0,bottom:0,left:0}}},
-      children:[new Paragraph({children:[new ImageRun({data:bytes,transformation:{width:wPx,height:hPx}})]})]
+      children:[new Paragraph({children:[new ImageRun({type:'jpg',data:bytes,transformation:{width:wPx,height:hPx}})]})]
     });
     FTX.progress('progress',5+Math.round(p/pdf.numPages*90));
   }
