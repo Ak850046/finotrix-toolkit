@@ -159,7 +159,7 @@ const SKIP=/Page\s*No|STATEMENT\s+SUMMARY|Opening\s+Balance|Closing\s+Bal|Dr\s+C
 const BANKS={
   hdfc:{label:'HDFC', needs:[/Narration/i,/Withdrawal/i,/Deposit/i,/Closing/i],
     find:{narration:/Narration/i,ref:/Chq|Ref/i,value:/Value/i,withdrawal:/Withdrawal/i,deposit:/Deposit/i,closing:/Closing/i},
-    order:['narration','ref','value','withdrawal','deposit','closing'], amounts:['withdrawal','deposit','closing'], narr:'narration',
+    order:['narration','ref','value','withdrawal','deposit','closing'], amounts:['withdrawal','deposit','closing'], narr:'narration', narrBelow:true,
     out:['Date','Narration','Chq./Ref.No.','Value Date','Withdrawal','Deposit','Closing Balance'], tie:{dr:'withdrawal',cr:'deposit',bal:'closing'}},
   canara:{label:'Canara', needs:[/Particulars/i,/Deposits/i,/Withdrawals/i,/Balance/i],
     find:{particulars:/Particulars/i,deposits:/Deposits/i,withdrawals:/Withdrawals/i,balance:/^Balance/i},
@@ -167,7 +167,7 @@ const BANKS={
     out:['Date','Particulars','Deposits','Withdrawals','Balance'], tie:{dr:'withdrawals',cr:'deposits',bal:'balance'}},
   sbi:{label:'SBI', needs:[/Description|Narration/i,/Debit|Withdrawal/i,/Credit|Deposit/i,/Balance/i],
     find:{description:/Description|Narration/i,ref:/Ref|Cheque|Chq/i,debit:/Debit|Withdrawal/i,credit:/Credit|Deposit/i,balance:/Balance/i},
-    order:['description','ref','debit','credit','balance'], amounts:['debit','credit','balance'], narr:'description',
+    order:['description','ref','debit','credit','balance'], amounts:['debit','credit','balance'], narr:'description', narrBelow:true,
     out:['Date','Description','Ref/Cheque No.','Debit','Credit','Balance'], tie:{dr:'debit',cr:'credit',bal:'balance'}},
 };
 function findCols(items,find){const o={};for(const k in find){const it=items.find(i=>find[k].test(i.t));o[k]=it?it.x:null;}return o;}
@@ -202,7 +202,17 @@ async function parseBank(file,cfg,onStatus,password){
       }
     }
     for(const n of pageNarr){
-      if(pageTxns.length){let best=pageTxns[0];for(const t of pageTxns)if(Math.abs(t.y-n.y)<Math.abs(best.y-n.y))best=t;best.pieces.push(n);}
+      if(cfg.narrBelow){
+        // Narration wraps onto lines BELOW its date row (HDFC/SBI). A continuation
+        // line belongs to the date row directly above it — NOT merely the nearest —
+        // else a wrap line closer to the next txn gets misfiled. pdf.js y is
+        // bottom-origin, so "above" = smallest txn.y that is still >= this line's y.
+        let host=null;
+        for(const t of pageTxns){ if(t.y>=n.y-2 && (!host||t.y<host.y)) host=t; }
+        if(host) host.pieces.push(n);
+        else if(txns.length) txns[txns.length-1].pieces.push(n);           // wrapped across a page break
+        else if(pageTxns.length){ let top=pageTxns[0]; for(const t of pageTxns) if(t.y>top.y) top=t; top.pieces.push(n); }
+      } else if(pageTxns.length){let best=pageTxns[0];for(const t of pageTxns)if(Math.abs(t.y-n.y)<Math.abs(best.y-n.y))best=t;best.pieces.push(n);}
       else if(txns.length)txns[txns.length-1].pieces.push(n);
     }
     txns.push(...pageTxns);
