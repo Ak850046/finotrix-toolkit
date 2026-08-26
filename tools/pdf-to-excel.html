@@ -188,9 +188,12 @@ async function parseBank(file,cfg,onStatus,password){
       const joined=row.items.map(i=>i.t).join(' ');
       if(cfg.needs.every(re=>re.test(joined))){ if(!colx){colx=findCols(row.items,cfg.find);nonDate=cfg.order.filter(k=>colx[k]!=null).map(k=>({key:k,x:colx[k]})).sort((a,b)=>a.x-b.x);} continue; }
       if(!colx) continue;
-      if(SKIP.test(joined)) continue;
       const first=row.items[0];
       const isNew = first && DATE.test(first.t) && first.x < colx[cfg.narr]-15;
+      // SKIP is for headers/footers/account-metadata only. A real dated transaction row
+      // must never be skipped just because its narration contains a term like "MICR"
+      // (e.g. "CHQ PAID-MICR ...") or "IFSC" — those legitimately appear in narrations.
+      if(!isNew && SKIP.test(joined)) continue;
       const bucket={}; cfg.order.forEach(k=>bucket[k]=[]);
       for(let k=(isNew?1:0);k<row.items.length;k++){const it=row.items[k];bucket[colForCat(it.x,nonDate)].push(it.t);}
       if(isNew){
